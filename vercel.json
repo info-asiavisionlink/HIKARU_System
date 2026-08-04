@@ -1,4 +1,6 @@
 {
   "framework": "nextjs",
-  "rootDirectory": "HIKARU-CONSOLE"
+  "buildCommand": "npm run build --workspace=hikaru-console",
+  "outputDirectory": "HIKARU-CONSOLE/.next",
+  "installCommand": "npm install"
 }
