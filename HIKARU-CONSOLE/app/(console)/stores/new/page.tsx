@@ -11,7 +11,7 @@ import {
 } from '@hikaru/ui'
 import { ArrowLeft } from 'lucide-react'
 
-export default function NewStorePage() {
+function NewStoreContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const defaultClientId = searchParams.get('client_id') ?? ''
@@ -120,5 +120,13 @@ export default function NewStorePage() {
         </div>
       </form>
     </div>
+  )
+}
+
+export default function NewStorePage() {
+  return (
+    <React.Suspense fallback={<div />}>
+      <NewStoreContent />
+    </React.Suspense>
   )
 }
