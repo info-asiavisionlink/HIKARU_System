@@ -6,8 +6,6 @@ const nextConfig: NextConfig = {
   typescript: { ignoreBuildErrors: true },
   eslint:     { ignoreDuringBuilds: true },
 
-  // Vercel モノレポ対応: ビルド出力をルートの .next に変更
-  distDir: '../.next',
 
   images: {
     remotePatterns: [
