@@ -29,7 +29,7 @@ export async function loginAction(
     {
       cookies: {
         getAll: () => cookieStore.getAll(),
-        setAll: (cookiesToSet) => {
+        setAll: (cookiesToSet: { name: string; value: string; options: Parameters<typeof cookieStore.set>[2] }[]) => {
           cookiesToSet.forEach(({ name, value, options }) =>
             cookieStore.set(name, value, options)
           )
@@ -87,7 +87,7 @@ export async function forgotPasswordAction(
     {
       cookies: {
         getAll: () => cookieStore.getAll(),
-        setAll: (cs) => cs.forEach(({ name, value, options }) => cookieStore.set(name, value, options)),
+        setAll: (cs: { name: string; value: string; options: Parameters<typeof cookieStore.set>[2] }[]) => cs.forEach(({ name, value, options }) => cookieStore.set(name, value, options)),
       },
     }
   )
@@ -116,7 +116,7 @@ export async function resetPasswordAction(
     {
       cookies: {
         getAll: () => cookieStore.getAll(),
-        setAll: (cs) => cs.forEach(({ name, value, options }) => cookieStore.set(name, value, options)),
+        setAll: (cs: { name: string; value: string; options: Parameters<typeof cookieStore.set>[2] }[]) => cs.forEach(({ name, value, options }) => cookieStore.set(name, value, options)),
       },
     }
   )
@@ -134,7 +134,7 @@ export async function logoutAction() {
     {
       cookies: {
         getAll: () => cookieStore.getAll(),
-        setAll: (cs) => cs.forEach(({ name, value, options }) => cookieStore.set(name, value, options)),
+        setAll: (cs: { name: string; value: string; options: Parameters<typeof cookieStore.set>[2] }[]) => cs.forEach(({ name, value, options }) => cookieStore.set(name, value, options)),
       },
     }
   )
