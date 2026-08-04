@@ -1,0 +1,20 @@
+{
+  "name": "@hikaru/lib",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./supabase/client": "./src/supabase/client.ts",
+    "./supabase/server": "./src/supabase/server.ts",
+    "./openai": "./src/openai/client.ts",
+    "./utils": "./src/utils/index.ts"
+  },
+  "peerDependencies": {
+    "@supabase/supabase-js": "^2.0.0",
+    "@supabase/ssr": "^0.6.0",
+    "openai": "^4.0.0",
+    "next": "^15.0.0"
+  }
+}

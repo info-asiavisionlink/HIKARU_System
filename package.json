@@ -1,0 +1,23 @@
+{
+  "name": "hikaru-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "HIKARU-System",
+    "HIKARU-CONSOLE",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:system": "npm run dev --workspace=HIKARU-System",
+    "dev:console": "npm run dev --workspace=HIKARU-CONSOLE",
+    "build:system": "npm run build --workspace=HIKARU-System",
+    "build:console": "npm run build --workspace=HIKARU-CONSOLE",
+    "build": "npm run build --workspaces",
+    "lint": "npm run lint --workspaces --if-present",
+    "type-check": "npm run type-check --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}

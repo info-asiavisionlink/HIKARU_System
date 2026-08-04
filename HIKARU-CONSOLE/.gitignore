@@ -1,0 +1,15 @@
+# 環境変数（絶対にコミットしない）
+.env
+.env.local
+.env.*.local
+
+# 依存関係
+node_modules/
+
+# Next.js ビルド成果物
+.next/
+out/
+
+# OS
+.DS_Store
+*.log

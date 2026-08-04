@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# Environment variables（絶対にコミットしない）
+.env
+.env.local
+.env.*.local
+.env.production
+
+# OS
+.DS_Store
+
+# TypeScript
+*.tsbuildinfo
+
+# Vercel
+.vercel
+
+# Test
+/playwright-report
