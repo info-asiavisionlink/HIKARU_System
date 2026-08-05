@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2017",
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
@@ -13,16 +17,40 @@
     "isolatedModules": true,
     "jsx": "preserve",
     "incremental": true,
-    "plugins": [{ "name": "next" }],
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
     "paths": {
-      "@/*": ["./*"],
-      "@hikaru/types": ["../packages/types/src/index.ts"],
-      "@hikaru/lib": ["../packages/lib/src/index.ts"],
-      "@hikaru/lib/*": ["../packages/lib/src/*"],
-      "@hikaru/ui": ["../packages/ui/src/index.ts"],
-      "@hikaru/ui/*": ["../packages/ui/src/*"]
+      "@/*": [
+        "./*"
+      ],
+      "@hikaru/types": [
+        "../packages/types/src/index.ts"
+      ],
+      "@hikaru/lib": [
+        "../packages/lib/src/index.ts"
+      ],
+      "@hikaru/lib/*": [
+        "../packages/lib/src/*"
+      ],
+      "@hikaru/ui": [
+        "../packages/ui/src/index.ts"
+      ],
+      "@hikaru/ui/*": [
+        "../packages/ui/src/*"
+      ]
     }
   },
-  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    "next-env.d.ts",
+    "../.next/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
 }
