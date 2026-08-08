@@ -3,13 +3,15 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Home, Briefcase, User } from 'lucide-react'
+import { Home, Briefcase, Calendar, Bell, User } from 'lucide-react'
 import { cn } from '@hikaru/ui'
 
 const navItems = [
-  { label: 'ホーム',       href: '/home',    icon: Home },
-  { label: '案件',         href: '/jobs',    icon: Briefcase },
-  { label: 'プロフィール', href: '/profile', icon: User },
+  { label: 'ホーム',       href: '/home',         icon: Home },
+  { label: '案件',         href: '/jobs',          icon: Briefcase },
+  { label: 'スケジュール', href: '/schedule',      icon: Calendar },
+  { label: '通知',         href: '/notifications', icon: Bell },
+  { label: 'プロフィール', href: '/profile',       icon: User },
 ]
 
 export function BottomNav() {

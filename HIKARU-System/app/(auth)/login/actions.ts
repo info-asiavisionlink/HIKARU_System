@@ -51,7 +51,7 @@ export async function loginAction(
   const admin = createAdminClient()
   const { data: profile } = await admin
     .from('profiles')
-    .select('role')
+    .select('role, entity_type')
     .eq('id', authData.user.id)
     .single()
 
@@ -60,12 +60,14 @@ export async function loginAction(
     return { error: 'アカウントの権限が設定されていません。管理者へお問い合わせください。' }
   }
 
-  if (profile.role === 'admin') {
+  // 純粋な管理者（従業員でないadmin）はSystemにログイン不可
+  if (profile.role === 'admin' && profile.entity_type !== 'employee') {
     await supabase.auth.signOut()
     return { error: '管理者アカウントです。HIKARU CONSOLE をご利用ください。' }
   }
 
-  if (profile.role !== 'worker' && profile.role !== 'client') {
+  // 従業員がadmin権限を持つ場合はSystemにもログイン可
+  if (profile.role !== 'worker' && profile.role !== 'admin' && profile.role !== 'client') {
     await supabase.auth.signOut()
     return { error: 'アカウントの権限が設定されていません。管理者へお問い合わせください。' }
   }
@@ -75,11 +77,13 @@ export async function loginAction(
   const maxAge = authData.session.expires_in ?? 3600
   const opts = { httpOnly: true, secure: isProduction, path: '/', maxAge, sameSite: 'lax' } as const
 
-  cookieStore.set('hk_s_role', profile.role,     opts)
+  // コンソールアクセス付き従業員も System では 'worker' として扱う
+  const effectiveRole = profile.role === 'admin' ? 'worker' : profile.role
+  cookieStore.set('hk_s_role', effectiveRole,    opts)
   cookieStore.set('hk_s_uid',  authData.user.id, opts)
 
-  if (profile.role === 'worker') redirect('/home')
-  if (profile.role === 'client') redirect('/client')
+  if (effectiveRole === 'worker') redirect('/home')
+  if (effectiveRole === 'client') redirect('/client')
 
   return { error: 'アカウントの権限が設定されていません。管理者へお問い合わせください。' }
 }
