@@ -22,3 +22,4 @@ out/
 
 # Test
 /playwright-report
+.env*

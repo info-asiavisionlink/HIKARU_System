@@ -138,6 +138,7 @@
   /* Layout */
   --bottom-nav-height: 68px;
   --header-height:     56px;
+  --sidebar-width:     240px;
 }
 
 @layer base {
