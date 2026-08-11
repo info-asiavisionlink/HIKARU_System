@@ -1,4 +1,5 @@
 {
-  "installCommand": "cd .. && npm install",
-  "buildCommand": "cd .. && npm run build --workspace=hikaru-console"
+  "installCommand": "npm install",
+  "buildCommand": "npm run build --workspace=HIKARU-System",
+  "outputDirectory": "HIKARU-System/.next"
 }

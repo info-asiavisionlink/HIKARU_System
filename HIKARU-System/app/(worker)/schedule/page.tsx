@@ -1,334 +1,269 @@
 'use client'
 
 import * as React from 'react'
-import Link from 'next/link'
-import { ChevronLeft, ChevronRight, Calendar, ExternalLink } from 'lucide-react'
+import { ChevronLeft, ChevronRight, CalendarDays, MapPin, Clock, Zap, RefreshCw, Hotel } from 'lucide-react'
+import { createClient } from '@/lib/supabase/client'
 
-const GOLD = 'oklch(0.73 0.12 78)'
-const CYAN = 'oklch(0.85 0.18 198)'
+const GOLD   = 'oklch(0.73 0.12 78)'
+const CYAN   = 'oklch(0.85 0.18 198)'
 const PURPLE = 'oklch(0.75 0.15 290)'
 
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土']
 
-function typeColor(type: string) {
-  if (type === 'spot')      return GOLD
-  if (type === 'recurring') return CYAN
-  if (type === 'hotel')     return PURPLE
+function typeColor(t: string) {
+  if (t === 'recurring') return CYAN
+  if (t === 'hotel')     return PURPLE
   return GOLD
 }
 
-function typeLabel(type: string) {
-  if (type === 'spot')      return '単発'
-  if (type === 'recurring') return '定期'
-  if (type === 'hotel')     return 'ホテル'
-  return type
+function addDays(d: Date, n: number) {
+  const r = new Date(d); r.setDate(r.getDate() + n); return r
 }
 
-interface Project {
+function formatDate(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+}
+
+interface Shift {
   id: string
-  name: string
-  project_type: string
+  shift_date: string
+  start_time: string
+  end_time: string
   status: string
-  start_date: string
-  end_date: string
-  work_start_time?: string
-  work_end_time?: string
-  location_name?: string
+  notes: string | null
+  projects: { id: string; name: string; location_name: string | null; project_type: string } | null
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  scheduled: '予定', confirmed: '確定', in_progress: '作業中', completed: '完了',
 }
 
 export default function SchedulePage() {
-  const today = new Date()
-  const [year, setYear] = React.useState(today.getFullYear())
-  const [month, setMonth] = React.useState(today.getMonth() + 1) // 1-indexed
-  const [projects, setProjects] = React.useState<Project[]>([])
-  const [loading, setLoading] = React.useState(true)
-  const [gcalUrl, setGcalUrl] = React.useState('')
-  const [gcalInput, setGcalInput] = React.useState('')
+  const today    = new Date()
+  const [baseDate, setBaseDate] = React.useState(today)
+  const [shifts,   setShifts]   = React.useState<Shift[]>([])
+  const [loading,  setLoading]  = React.useState(true)
+  const [realtimeConnected, setRealtimeConnected] = React.useState(false)
 
-  React.useEffect(() => {
+  // 週の範囲
+  const weekDates = React.useMemo(() => {
+    const day = baseDate.getDay()
+    const mon = addDays(baseDate, -day + (day === 0 ? -6 : 1))
+    return Array.from({ length: 7 }, (_, i) => addDays(mon, i))
+  }, [baseDate])
+
+  const dateFrom = formatDate(weekDates[0])
+  const dateTo   = formatDate(weekDates[6])
+
+  const fetchShifts = React.useCallback(async () => {
     setLoading(true)
-    fetch(`/api/schedule?year=${year}&month=${month}`, { credentials: 'include', cache: 'no-store' })
-      .then(r => r.ok ? r.json() : Promise.reject())
-      .then(({ data }) => setProjects(data ?? []))
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [year, month])
+    try {
+      const res = await fetch(`/api/shifts?date_from=${dateFrom}&date_to=${dateTo}`, { credentials: 'include' })
+      if (res.ok) {
+        const { shifts: data } = await res.json()
+        setShifts(data ?? [])
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [dateFrom, dateTo])
 
-  function prevMonth() {
-    if (month === 1) { setYear(y => y - 1); setMonth(12) }
-    else setMonth(m => m - 1)
-  }
-  function nextMonth() {
-    if (month === 12) { setYear(y => y + 1); setMonth(1) }
-    else setMonth(m => m + 1)
-  }
+  React.useEffect(() => { fetchShifts() }, [fetchShifts])
 
-  // カレンダーのセル生成
-  const firstDay = new Date(year, month - 1, 1)
-  const lastDay  = new Date(year, month, 0)
-  const startDow = firstDay.getDay() // 0=日
-  const totalDays = lastDay.getDate()
+  // Supabase Realtime: 自分のシフトが変更されたら自動更新
+  React.useEffect(() => {
+    const supabase = createClient()
+    const channel = supabase
+      .channel('shifts-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'shifts' },
+        () => { fetchShifts() }
+      )
+      .subscribe(status => {
+        setRealtimeConnected(status === 'SUBSCRIBED')
+      })
 
-  // カレンダーグリッド（先頭の空白含む）
-  const cells: (number | null)[] = [
-    ...Array(startDow).fill(null),
-    ...Array.from({ length: totalDays }, (_, i) => i + 1),
-  ]
-  // 6行になるよう末尾を埋める
-  while (cells.length % 7 !== 0) cells.push(null)
+    return () => { supabase.removeChannel(channel) }
+  }, [fetchShifts])
 
-  // 日付に該当するプロジェクトを返す
-  function projectsForDay(day: number): Project[] {
-    const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-    return projects.filter(p => p.start_date <= dateStr && p.end_date >= dateStr)
-  }
+  const todayStr = formatDate(today)
 
-  const isToday = (day: number) =>
-    day === today.getDate() && month === today.getMonth() + 1 && year === today.getFullYear()
+  // 日付ごとのシフトMap
+  const shiftsByDate = React.useMemo(() => {
+    const map: Record<string, Shift[]> = {}
+    for (const s of shifts) {
+      if (!map[s.shift_date]) map[s.shift_date] = []
+      map[s.shift_date].push(s)
+    }
+    return map
+  }, [shifts])
+
+  const monthLabel = `${baseDate.getFullYear()}年${baseDate.getMonth()+1}月`
 
   return (
-    <div className="max-w-5xl space-y-6">
+    <div className="px-4 py-4 space-y-4">
       {/* ヘッダー */}
-      <div>
-        <h1 className="text-xl font-bold" style={{ color: 'oklch(0.92 0.008 75)' }}>スケジュール</h1>
-        <p className="text-xs mt-0.5" style={{ color: 'oklch(0.50 0.007 75)' }}>担当案件のカレンダービュー</p>
+      <div className="flex items-center justify-between">
+        <h1 className="text-lg font-bold" style={{ color: 'oklch(0.92 0.008 75)' }}>スケジュール</h1>
+        <div className="flex items-center gap-1">
+          {/* Realtime インジケーター */}
+          <span className={`h-1.5 w-1.5 rounded-full ${realtimeConnected ? 'animate-pulse' : ''}`}
+            style={{ background: realtimeConnected ? 'oklch(0.72 0.18 150)' : 'oklch(0.35 0.005 75)' }} />
+          <span className="text-[8px] uppercase tracking-widest" style={{ color: 'oklch(0.40 0.005 75)' }}>
+            {realtimeConnected ? 'LIVE' : 'connecting'}
+          </span>
+        </div>
       </div>
 
-      {/* 月ナビゲーション */}
-      <div className="flex items-center gap-4">
-        <button
-          onClick={prevMonth}
-          className="flex h-9 w-9 items-center justify-center rounded-xl transition-all"
-          style={{ background: 'oklch(0.09 0.005 255 / 0.80)', border: `1px solid ${GOLD}20`, color: GOLD }}
-          aria-label="前月"
-        >
+      {/* 週ナビゲーション */}
+      <div className="flex items-center justify-between">
+        <button onClick={() => setBaseDate(d => addDays(d, -7))}
+          className="p-2 rounded-[var(--radius)] transition-all"
+          style={{ background: `${GOLD}15`, border: `1px solid ${GOLD}30`, color: GOLD }}>
           <ChevronLeft className="h-4 w-4" />
         </button>
-        <h2 className="text-lg font-black tabular-nums" style={{ color: 'oklch(0.92 0.008 75)', minWidth: '8rem', textAlign: 'center' }}>
-          {year}年 {month}月
-        </h2>
-        <button
-          onClick={nextMonth}
-          className="flex h-9 w-9 items-center justify-center rounded-xl transition-all"
-          style={{ background: 'oklch(0.09 0.005 255 / 0.80)', border: `1px solid ${GOLD}20`, color: GOLD }}
-          aria-label="翌月"
-        >
+        <span className="text-sm font-semibold" style={{ color: 'oklch(0.80 0.008 75)' }}>{monthLabel}</span>
+        <button onClick={() => setBaseDate(d => addDays(d, 7))}
+          className="p-2 rounded-[var(--radius)] transition-all"
+          style={{ background: `${GOLD}15`, border: `1px solid ${GOLD}30`, color: GOLD }}>
           <ChevronRight className="h-4 w-4" />
         </button>
-
-        {/* 今月ボタン */}
-        <button
-          onClick={() => { setYear(today.getFullYear()); setMonth(today.getMonth() + 1) }}
-          className="ml-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
-          style={{ background: `${GOLD}14`, border: `1px solid ${GOLD}25`, color: GOLD }}
-        >
-          今月
-        </button>
-
-        {/* 凡例 */}
-        <div className="ml-auto hidden sm:flex items-center gap-4">
-          {[['spot', '単発'], ['recurring', '定期'], ['hotel', 'ホテル']] .map(([type, lbl]) => (
-            <div key={type} className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-sm" style={{ background: typeColor(type) }} />
-              <span className="text-xs" style={{ color: 'oklch(0.55 0.007 75)' }}>{lbl}</span>
-            </div>
-          ))}
-        </div>
       </div>
 
-      {/* カレンダー本体 */}
-      <div className="rounded-2xl overflow-hidden" style={{ background: 'oklch(0.08 0.004 260 / 0.90)', border: `1px solid ${GOLD}15` }}>
-        {/* 曜日ヘッダー */}
-        <div className="grid grid-cols-7" style={{ borderBottom: `1px solid ${GOLD}12` }}>
-          {WEEKDAYS.map((d, i) => (
-            <div key={d}
-              className="py-2 text-center text-xs font-bold"
-              style={{ color: i === 0 ? 'oklch(0.70 0.20 27)' : i === 6 ? 'oklch(0.68 0.20 230)' : 'oklch(0.50 0.007 75)' }}>
-              {d}
+      {/* 曜日カレンダー */}
+      <div className="grid grid-cols-7 gap-1">
+        {weekDates.map(d => {
+          const ds       = formatDate(d)
+          const isToday  = ds === todayStr
+          const dayShifts = shiftsByDate[ds] ?? []
+          const hasBoth  = dayShifts.some(s => s.status === 'confirmed')
+
+          return (
+            <div key={ds} className="flex flex-col items-center gap-1">
+              <span className="text-[9px]" style={{ color: 'oklch(0.45 0.005 75)' }}>
+                {WEEKDAYS[d.getDay()]}
+              </span>
+              <div
+                className="h-9 w-9 flex items-center justify-center rounded-full text-sm font-bold transition-all"
+                style={isToday ? {
+                  background: `linear-gradient(135deg, oklch(0.52 0.10 75), ${GOLD})`,
+                  color: 'oklch(0.06 0.003 260)',
+                  boxShadow: `0 0 12px ${GOLD}50`,
+                } : {
+                  color: dayShifts.length > 0 ? 'oklch(0.88 0.008 75)' : 'oklch(0.50 0.007 75)',
+                }}>
+                {d.getDate()}
+              </div>
+              {/* シフトドット */}
+              <div className="flex gap-0.5 h-2 items-center justify-center">
+                {dayShifts.slice(0,3).map((_, i) => (
+                  <span key={i} className="h-1 w-1 rounded-full"
+                    style={{ background: hasBoth ? CYAN : GOLD }} />
+                ))}
+              </div>
             </div>
-          ))}
+          )
+        })}
+      </div>
+
+      {/* シフト詳細リスト */}
+      {loading ? (
+        <div className="flex items-center justify-center h-32">
+          <div className="h-5 w-5 rounded-full border-2 border-t-transparent animate-spin"
+            style={{ borderColor: `${GOLD}60`, borderTopColor: 'transparent' }} />
         </div>
+      ) : (
+        <div className="space-y-3">
+          {weekDates.map(d => {
+            const ds = formatDate(d)
+            const dayShifts = shiftsByDate[ds] ?? []
+            const isToday = ds === todayStr
+            const isPast  = d < today && !isToday
 
-        {/* 日付グリッド */}
-        {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <div className="h-6 w-6 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: GOLD, borderTopColor: 'transparent' }} />
-          </div>
-        ) : (
-          <div className="grid grid-cols-7">
-            {cells.map((day, idx) => {
-              const dayOfWeek = idx % 7
-              const dayProjects = day ? projectsForDay(day) : []
-              const isWeekend = dayOfWeek === 0 || dayOfWeek === 6
-              const todayCell = day ? isToday(day) : false
-
-              return (
-                <div
-                  key={idx}
-                  style={{
-                    minHeight: '80px',
-                    borderRight: (idx + 1) % 7 !== 0 ? `1px solid ${GOLD}0a` : 'none',
-                    borderBottom: idx < cells.length - 7 ? `1px solid ${GOLD}0a` : 'none',
-                    background: !day ? 'oklch(0.06 0.003 260 / 0.40)' :
-                      todayCell ? `${GOLD}08` : 'transparent',
-                    padding: '4px',
-                  }}
-                >
-                  {day && (
-                    <>
-                      {/* 日付数字 */}
-                      <div
-                        style={{
-                          fontSize: '12px',
-                          fontWeight: todayCell ? 900 : 500,
-                          color: todayCell ? 'oklch(0.06 0.003 260)' :
-                            dayOfWeek === 0 ? 'oklch(0.70 0.20 27)' :
-                            dayOfWeek === 6 ? 'oklch(0.68 0.20 230)' :
-                            'oklch(0.70 0.008 75)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          height: '22px',
-                          width: '22px',
-                          borderRadius: '9999px',
-                          background: todayCell ? GOLD : 'transparent',
-                          marginBottom: '2px',
-                        }}
-                      >
-                        {day}
-                      </div>
-                      {/* 案件チップ */}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
-                        {dayProjects.slice(0, 3).map(p => (
-                          <Link
-                            key={p.id}
-                            href={`/jobs/${p.id}`}
-                            style={{
-                              display: 'block',
-                              borderRadius: '3px',
-                              padding: '1px 4px',
-                              fontSize: '9px',
-                              fontWeight: 600,
-                              lineHeight: '1.4',
-                              overflow: 'hidden',
-                              whiteSpace: 'nowrap',
-                              textOverflow: 'ellipsis',
-                              background: `${typeColor(p.project_type)}22`,
-                              color: typeColor(p.project_type),
-                              textDecoration: 'none',
-                              border: `1px solid ${typeColor(p.project_type)}30`,
-                            }}
-                            title={p.name}
-                          >
-                            {p.name}
-                          </Link>
-                        ))}
-                        {dayProjects.length > 3 && (
-                          <span style={{ fontSize: '9px', color: 'oklch(0.50 0.007 75)', padding: '0 4px' }}>
-                            +{dayProjects.length - 3}件
-                          </span>
-                        )}
-                      </div>
-                    </>
+            return (
+              <div key={ds}
+                className="rounded-[var(--radius-xl)] overflow-hidden"
+                style={{
+                  border: isToday ? `1px solid ${GOLD}35` : '1px solid oklch(0.12 0.003 260)',
+                  background: isToday ? `${GOLD}05` : 'oklch(0.07 0.003 260)',
+                  opacity: isPast ? 0.65 : 1,
+                }}>
+                {/* 日付行 */}
+                <div className="flex items-center gap-2 px-3 py-2"
+                  style={{ borderBottom: dayShifts.length > 0 ? '1px solid oklch(0.12 0.003 260)' : 'none' }}>
+                  <span className="text-xs font-bold"
+                    style={{ color: isToday ? GOLD : 'oklch(0.60 0.007 75)' }}>
+                    {d.getMonth()+1}/{d.getDate()} ({WEEKDAYS[d.getDay()]})
+                  </span>
+                  {isToday && (
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded"
+                      style={{ background: `${GOLD}20`, color: GOLD }}>TODAY</span>
                   )}
                 </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
 
-      {/* 今月の案件リスト */}
-      {projects.length > 0 && (
-        <section>
-          <p className="text-[9px] font-bold uppercase tracking-[0.25em] mb-3" style={{ color: `${GOLD}50` }}>
-            {month}月の担当案件
-          </p>
-          <div className="space-y-2">
-            {projects.map(p => {
-              const c = typeColor(p.project_type)
-              return (
-                <Link key={p.id} href={`/jobs/${p.id}`}
-                  className="flex items-center gap-3 rounded-xl p-3 transition-all"
-                  style={{ background: 'oklch(0.09 0.005 255 / 0.80)', border: `1px solid ${c}18`, textDecoration: 'none' }}>
-                  <span className="h-3 w-1 rounded-full shrink-0" style={{ background: c }} />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate" style={{ color: 'oklch(0.90 0.008 75)' }}>{p.name}</p>
-                    <p className="text-xs mt-0.5" style={{ color: 'oklch(0.50 0.007 75)' }}>
-                      {p.start_date} 〜 {p.end_date}
-                      {p.work_start_time && ` | ${p.work_start_time}${p.work_end_time ? `〜${p.work_end_time}` : ''}`}
-                    </p>
-                  </div>
-                  <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-full font-bold"
-                    style={{ background: `${c}18`, color: c }}>
-                    {typeLabel(p.project_type)}
-                  </span>
-                </Link>
-              )
-            })}
-          </div>
-        </section>
+                {/* シフトカード */}
+                {dayShifts.length === 0 ? (
+                  <p className="px-3 py-2 text-xs" style={{ color: 'oklch(0.32 0.005 75)' }}>—</p>
+                ) : dayShifts.map(shift => {
+                  const col = typeColor(shift.projects?.project_type ?? '')
+                  const isConfirmed = shift.status === 'confirmed'
+
+                  return (
+                    <div key={shift.id} className="px-3 py-3 space-y-1.5"
+                      style={{ borderTop: '1px solid oklch(0.10 0.003 260)' }}>
+                      {/* 時間 + ステータス */}
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <Clock className="h-3 w-3 shrink-0" style={{ color: col }} />
+                          <span className="text-xs font-bold tabular-nums" style={{ color: col }}>
+                            {shift.start_time.slice(0,5)} 〜 {shift.end_time.slice(0,5)}
+                          </span>
+                        </div>
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded"
+                          style={{
+                            background: isConfirmed ? `${CYAN}18` : `${GOLD}15`,
+                            color: isConfirmed ? CYAN : GOLD,
+                          }}>
+                          {STATUS_LABEL[shift.status] ?? shift.status}
+                        </span>
+                      </div>
+
+                      {/* 案件名 */}
+                      <p className="text-sm font-semibold" style={{ color: 'oklch(0.92 0.008 75)' }}>
+                        {shift.projects?.name ?? '—'}
+                      </p>
+
+                      {/* 場所 */}
+                      {shift.projects?.location_name && (
+                        <div className="flex items-center gap-1">
+                          <MapPin className="h-3 w-3 shrink-0" style={{ color: 'oklch(0.45 0.005 75)' }} />
+                          <span className="text-xs" style={{ color: 'oklch(0.55 0.007 75)' }}>
+                            {shift.projects.location_name}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* 備考 */}
+                      {shift.notes && (
+                        <p className="text-xs" style={{ color: 'oklch(0.50 0.007 75)' }}>{shift.notes}</p>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })}
+
+          {shifts.length === 0 && (
+            <div className="flex flex-col items-center justify-center h-32 gap-2"
+              style={{ color: 'oklch(0.38 0.005 75)' }}>
+              <CalendarDays className="h-8 w-8 opacity-30" />
+              <p className="text-sm">この週にシフトはありません</p>
+            </div>
+          )}
+        </div>
       )}
-
-      {/* Googleカレンダー連携 */}
-      <section>
-        <div className="flex items-center gap-2 mb-3">
-          <Calendar className="h-4 w-4" style={{ color: GOLD }} />
-          <h2 className="text-sm font-bold" style={{ color: 'oklch(0.88 0.008 75)' }}>Googleカレンダーと連携</h2>
-        </div>
-        <div className="rounded-2xl p-4 space-y-3" style={{ background: 'oklch(0.09 0.005 255 / 0.82)', border: `1px solid ${GOLD}15` }}>
-          <p className="text-xs" style={{ color: 'oklch(0.55 0.007 75)' }}>
-            GoogleカレンダーのEmbedURLを入力すると、カレンダーが下に表示されます。<br />
-            Googleカレンダー設定 → 「カレンダーを統合」→「HTMLコード」からURLを取得してください。
-          </p>
-          <div className="flex gap-2">
-            <input
-              type="url"
-              value={gcalInput}
-              onChange={e => setGcalInput(e.target.value)}
-              placeholder="https://calendar.google.com/calendar/embed?src=..."
-              className="flex-1 h-10 rounded-xl px-3 text-xs outline-none"
-              style={{ background: 'oklch(0.07 0.004 255 / 0.90)', border: `1px solid ${GOLD}20`, color: 'oklch(0.88 0.008 75)' }}
-            />
-            <button
-              onClick={() => setGcalUrl(gcalInput.trim())}
-              className="shrink-0 px-4 h-10 rounded-xl text-sm font-medium transition-all"
-              style={{ background: GOLD, color: 'oklch(0.06 0.003 260)', fontWeight: 700 }}
-            >
-              表示
-            </button>
-            {gcalUrl && (
-              <button
-                onClick={() => { setGcalUrl(''); setGcalInput('') }}
-                className="shrink-0 px-3 h-10 rounded-xl text-sm font-medium transition-all"
-                style={{ background: 'oklch(0.12 0.007 255 / 0.70)', color: 'oklch(0.55 0.007 75)', border: `1px solid ${GOLD}15` }}
-              >
-                クリア
-              </button>
-            )}
-          </div>
-
-          {gcalUrl && (
-            <div className="mt-2 rounded-xl overflow-hidden" style={{ border: `1px solid ${GOLD}18` }}>
-              <iframe
-                src={gcalUrl}
-                title="Googleカレンダー"
-                width="100%"
-                height="500"
-                style={{ display: 'block', border: 'none', background: '#fff' }}
-                allowFullScreen
-              />
-            </div>
-          )}
-
-          {!gcalUrl && (
-            <div className="flex items-center gap-2 text-xs" style={{ color: 'oklch(0.45 0.006 75)' }}>
-              <ExternalLink className="h-3.5 w-3.5" />
-              URLを入力すると Googleカレンダーが表示されます
-            </div>
-          )}
-        </div>
-      </section>
     </div>
   )
 }
