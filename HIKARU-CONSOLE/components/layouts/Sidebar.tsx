@@ -6,7 +6,7 @@ import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, FolderOpen, Building2, UserCheck, HandshakeIcon,
   BookOpen, BarChart3, Settings, ChevronLeft, ChevronRight,
-  Bell, FileText, Zap, Hotel, RefreshCw,
+  Bell, FileText, Zap, Hotel, RefreshCw, Receipt,
 } from 'lucide-react'
 import { cn } from '@hikaru/ui'
 
@@ -34,6 +34,7 @@ const navItems: NavItem[] = [
   { label: 'マニュアル管理',   href: '/manuals',       icon: BookOpen },
   { label: '報告書管理',       href: '/reports',       icon: FileText },
   { label: '通知管理',         href: '/notifications', icon: Bell },
+  { label: '経費管理',         href: '/expenses',      icon: Receipt },
   { label: 'AI分析',           href: '/analytics',     icon: BarChart3 },
 ]
 
