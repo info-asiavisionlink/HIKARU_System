@@ -1,10 +1,9 @@
 'use client'
 
 import * as React from 'react'
-import { createClient } from '@/lib/supabase/client'
 import { WorkerHeader } from '@/components/layouts/WorkerHeader'
 import { cn } from '@hikaru/ui'
-import { Bell, Info, AlertTriangle, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { Bell, Info, AlertTriangle, AlertCircle, CheckCircle2, CheckCheck } from 'lucide-react'
 
 interface NotificationRow {
   id: string
@@ -24,36 +23,97 @@ const typeConfig = {
 }
 
 export default function NotificationsPage() {
-  const [items, setItems] = React.useState<NotificationRow[]>([])
+  const [items,   setItems]   = React.useState<NotificationRow[]>([])
   const [loading, setLoading] = React.useState(true)
+  const [error,   setError]   = React.useState<string | null>(null)
 
-  React.useEffect(() => {
-    async function load() {
-      const supabase = createClient()
-      const { data } = await supabase
-        .from('notifications')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(30)
-      setItems((data as NotificationRow[]) ?? [])
+  async function fetchNotifications() {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch('/api/notifications', { credentials: 'include' })
+      if (!res.ok) {
+        setError('通知の取得に失敗しました')
+        return
+      }
+      const { notifications } = await res.json()
+      setItems(notifications ?? [])
+    } catch {
+      setError('ネットワークエラーが発生しました')
+    } finally {
       setLoading(false)
+    }
+  }
 
-      // 既読にする
-      const unread = (data ?? []).filter((n: any) => !n.is_read).map((n: any) => n.id)
-      if (unread.length > 0) {
-        await supabase.from('notifications').update({ is_read: true }).in('id', unread)
+  React.useEffect(() => { fetchNotifications() }, [])
+
+  async function handleClick(n: NotificationRow) {
+    // 未読なら既読化
+    if (!n.is_read) {
+      try {
+        await fetch(`/api/notifications/${n.id}/read`, {
+          method: 'PATCH',
+          credentials: 'include',
+        })
+        setItems(prev => prev.map(item =>
+          item.id === n.id ? { ...item, is_read: true } : item
+        ))
+      } catch {
+        // 既読化失敗は無視してUX継続
       }
     }
-    load()
-  }, [])
+    // target_url があれば遷移
+    if (n.target_url) {
+      window.location.href = n.target_url
+    }
+  }
+
+  async function handleReadAll() {
+    try {
+      await fetch('/api/notifications/read-all', {
+        method: 'PATCH',
+        credentials: 'include',
+      })
+      setItems(prev => prev.map(item => ({ ...item, is_read: true })))
+    } catch {
+      // 失敗しても表示は維持
+    }
+  }
+
+  const unreadCount = items.filter(n => !n.is_read).length
 
   return (
     <div className="min-h-dvh bg-[var(--color-background)]">
-      <WorkerHeader title="通知" showBack />
+      <WorkerHeader
+        title="通知"
+        showBack
+        rightAction={
+          unreadCount > 0 ? (
+            <button
+              onClick={handleReadAll}
+              className="flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors px-2 py-1"
+            >
+              <CheckCheck className="h-3.5 w-3.5" />
+              全て既読
+            </button>
+          ) : undefined
+        }
+      />
 
       {loading ? (
         <div className="flex justify-center py-16">
           <div className="h-8 w-8 rounded-full border-2 border-[var(--color-primary)] border-t-transparent animate-spin" />
+        </div>
+      ) : error ? (
+        <div className="flex flex-col items-center justify-center py-20 text-center px-4">
+          <AlertCircle className="h-12 w-12 text-[var(--color-error)] opacity-40 mb-3" />
+          <p className="text-sm font-medium text-[var(--color-foreground)]">{error}</p>
+          <button
+            onClick={fetchNotifications}
+            className="mt-4 text-xs text-[var(--color-primary)] underline"
+          >
+            再読み込み
+          </button>
         </div>
       ) : items.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-center">
@@ -65,11 +125,14 @@ export default function NotificationsPage() {
           {items.map((n) => {
             const { icon: Icon, color } = typeConfig[n.type] ?? typeConfig.info
             return (
-              <div
+              <button
                 key={n.id}
+                onClick={() => handleClick(n)}
                 className={cn(
-                  'flex items-start gap-3 px-4 py-4',
-                  !n.is_read && 'bg-[var(--color-primary-muted)]'
+                  'w-full flex items-start gap-3 px-4 py-4 text-left transition-colors',
+                  !n.is_read
+                    ? 'bg-[var(--color-primary-muted)]'
+                    : 'hover:bg-[var(--color-surface-hover)]'
                 )}
               >
                 <Icon className={cn('h-5 w-5 mt-0.5 shrink-0', color)} />
@@ -77,15 +140,19 @@ export default function NotificationsPage() {
                   <p className={cn('text-sm font-medium', !n.is_read && 'font-semibold')}>
                     {n.title}
                   </p>
-                  {n.body && <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">{n.body}</p>}
+                  {n.body && (
+                    <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">{n.body}</p>
+                  )}
                   <p className="mt-1 text-[10px] text-[var(--color-subtle)]">
                     {new Date(n.created_at).toLocaleString('ja-JP', {
                       month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
                     })}
                   </p>
                 </div>
-                {!n.is_read && <span className="h-2 w-2 rounded-full bg-[var(--color-primary)] shrink-0 mt-1.5" />}
-              </div>
+                {!n.is_read && (
+                  <span className="h-2 w-2 rounded-full bg-[var(--color-primary)] shrink-0 mt-1.5" />
+                )}
+              </button>
             )
           })}
         </div>

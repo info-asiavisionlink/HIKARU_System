@@ -12,7 +12,8 @@ interface WorkerTopBarProps {
 }
 
 export function WorkerTopBar({ onMobileMenuClick }: WorkerTopBarProps) {
-  const [time, setTime] = React.useState('')
+  const [time, setTime]         = React.useState('')
+  const [unreadCount, setUnreadCount] = React.useState(0)
 
   React.useEffect(() => {
     const update = () => {
@@ -22,6 +23,14 @@ export function WorkerTopBar({ onMobileMenuClick }: WorkerTopBarProps) {
     update()
     const id = setInterval(update, 1000)
     return () => clearInterval(id)
+  }, [])
+
+  // 未読件数を取得（ページロード時のみ。Realtimeは今回対象外）
+  React.useEffect(() => {
+    fetch('/api/notifications', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.unread_count != null) setUnreadCount(d.unread_count) })
+      .catch(() => { /* 未読取得失敗は無視 */ })
   }, [])
 
   return (
@@ -73,6 +82,21 @@ export function WorkerTopBar({ onMobileMenuClick }: WorkerTopBarProps) {
           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = `${GOLD}80` }}
         >
           <Bell className="h-4 w-4" />
+          {unreadCount > 0 && (
+            <span
+              className="absolute -top-0.5 -right-0.5 flex items-center justify-center rounded-full text-[9px] font-black leading-none"
+              style={{
+                minWidth: '14px',
+                height: '14px',
+                padding: '0 3px',
+                background: 'oklch(0.65 0.22 25)',
+                color: '#fff',
+                boxShadow: '0 0 6px oklch(0.65 0.22 25 / 0.7)',
+              }}
+            >
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </span>
+          )}
         </Link>
       </div>
 
