@@ -16,7 +16,14 @@ const navItems: NavItem[] = [
   { label: '案件',         href: '/jobs',           icon: Briefcase },
   { label: 'スケジュール', href: '/schedule',       icon: Calendar },
   { label: 'シフト管理',   href: '/shifts',         icon: CalendarCheck },
-  { label: '勤怠管理',     href: '/attendance',     icon: ClockArrowUp },
+  {
+    label: '勤怠管理',
+    href: '/attendance',
+    icon: ClockArrowUp,
+    children: [
+      { label: '修正申請', href: '/attendance/corrections' },
+    ],
+  },
   { label: '経費申請',     href: '/expenses',       icon: Receipt },
   {
     label: '営業成績',

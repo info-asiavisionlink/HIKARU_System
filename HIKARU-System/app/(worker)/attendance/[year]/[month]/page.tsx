@@ -3,7 +3,7 @@
 import * as React from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { ChevronLeft, Clock, Banknote, CalendarDays, Coffee } from 'lucide-react'
+import { ChevronLeft, Clock, Banknote, CalendarDays, Coffee, FilePen } from 'lucide-react'
 
 const GOLD = 'oklch(0.73 0.12 78)'
 
@@ -93,6 +93,15 @@ export default function MonthlyAttendancePage() {
                       <Clock className="h-3 w-3" />{minsToHHMM(r.work_minutes ?? 0)}
                     </span>
                     <span className="font-bold" style={{ color: GOLD }}>¥{(r.daily_pay ?? 0).toLocaleString()}</span>
+                    <Link
+                      href={`/attendance/corrections/new?record_id=${r.id}&date=${r.work_date}&clock_in=${encodeURIComponent(r.clock_in ?? '')}&clock_out=${encodeURIComponent(r.clock_out ?? '')}&break_start=${encodeURIComponent(r.break_start ?? '')}&break_end=${encodeURIComponent(r.break_end ?? '')}`}
+                      className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium"
+                      style={{ background: `${GOLD}14`, color: `${GOLD}cc`, border: `1px solid ${GOLD}25` }}
+                      title="修正申請"
+                    >
+                      <FilePen className="h-3 w-3" />
+                      修正申請
+                    </Link>
                   </div>
                 </div>
                 <div className="grid grid-cols-4 gap-1 text-xs">
