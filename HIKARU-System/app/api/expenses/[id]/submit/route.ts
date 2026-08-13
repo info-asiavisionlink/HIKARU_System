@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createAdminClient } from '@/lib/supabase/server'
+
+const CATEGORY_LABELS: Record<string, string> = {
+  transport: '交通費', parking: '駐車場代', supplies: '備品',
+  consumables: '消耗品', other: 'その他',
+}
 
 // POST /api/expenses/[id]/submit - draft → submitted
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -25,6 +30,70 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  // 将来: LINE通知 expense_submitted イベントをここでキック
+
+  // 管理者へSystem通知（fire-and-forget・失敗しても申請を取り消さない）
+  void notifyAdminsOfExpenseSubmitted(id, uid)
+
   return NextResponse.json({ expense: data })
+}
+
+// ---------------------------------------------------------------
+// helper: 同一 company の管理者全員へ経費申請通知（fire-and-forget）
+// ---------------------------------------------------------------
+async function notifyAdminsOfExpenseSubmitted(expenseId: string, workerId: string) {
+  try {
+    const admin = createAdminClient()
+
+    // 提出済み経費レコードをサーバー側で再取得（クライアント値を信用しない）
+    const { data: expense } = await admin
+      .from('expenses')
+      .select('company_id, category, amount, description')
+      .eq('id', expenseId)
+      .single()
+
+    if (!expense?.company_id) return
+
+    // Worker 名をサーバー側で取得
+    const { data: workerProfile } = await admin
+      .from('profiles')
+      .select('name')
+      .eq('id', workerId)
+      .single()
+    const workerName = (workerProfile?.name as string | null) ?? 'Worker'
+
+    // 通知本文を生成
+    const categoryLabel = CATEGORY_LABELS[expense.category as string] ?? expense.category ?? 'その他'
+    const amount        = (expense.amount as number | null) ?? 0
+    const description   = (expense.description as string | null) ?? ''
+    const body          = [
+      `${workerName}さんから経費申請が届きました。`,
+      `金額: ¥${amount.toLocaleString('ja-JP')}`,
+      `内容: ${categoryLabel}${description ? ` / ${description}` : ''}`,
+    ].join('\n')
+
+    // 同一会社の管理者 profiles.id 一覧
+    const { data: admins } = await admin
+      .from('profiles')
+      .select('id')
+      .eq('company_id', expense.company_id)
+      .eq('role', 'admin')
+
+    if (!admins || admins.length === 0) return
+
+    // 管理者全員へ 1 件ずつ通知を挿入
+    const rows = admins.map((a: { id: string }) => ({
+      company_id:           expense.company_id,
+      recipient_profile_id: a.id,
+      title:                '新しい経費申請があります',
+      body,
+      type:                 'expense_submitted',
+      is_read:              false,
+      target_url:           `/expenses/${expenseId}`,
+    }))
+
+    const { error } = await admin.from('notifications').insert(rows)
+    if (error) console.error('[Admin通知] 経費申請通知挿入失敗:', error.message)
+  } catch (e) {
+    console.error('[Admin通知] 経費申請 予期しないエラー:', e)
+  }
 }
