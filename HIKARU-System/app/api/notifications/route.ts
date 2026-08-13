@@ -22,7 +22,9 @@ const WORKER_NOTIFICATION_TYPES = [
 
 // GET /api/notifications
 // ログインWorker本人の通知のみ返す。company_id + recipient_profile_id で二重確認。
-// WORKER_NOTIFICATION_TYPES でWorker向け通知のみに絞る（ADMIN_ONLY type混入防止）。
+// WORKER_NOTIFICATION_TYPES と target_app の二重防御でADMIN通知を除外する:
+//   - type IN WORKER_NOTIFICATION_TYPES: typeによる第1防御
+//   - target_app='worker' OR target_app IS NULL: appによる第2防御 (NULL=legacy互換)
 export async function GET(req: NextRequest) {
   const uid = req.cookies.get('hk_s_uid')?.value
   if (!uid) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
@@ -46,6 +48,7 @@ export async function GET(req: NextRequest) {
     .eq('recipient_profile_id', uid)
     .eq('company_id', profile.company_id)
     .in('type', WORKER_NOTIFICATION_TYPES)
+    .or('target_app.eq.worker,target_app.is.null')
     .order('created_at', { ascending: false })
     .limit(50)
 
