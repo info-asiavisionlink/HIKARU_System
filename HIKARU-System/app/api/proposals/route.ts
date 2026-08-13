@@ -74,6 +74,15 @@ export async function POST(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
+  // 管理者へSystem通知（fire-and-forget・提案処理を失敗させない）
+  void notifyAdminsOfProposalSubmitted(admin, {
+    proposalId:  proposal.id,
+    companyId:   profile.company_id,
+    workerId:    user.id,
+    projectName: proposal.project_name,
+    projectType: proposal.project_type ?? 'spot',
+  })
+
   // ドキュメントを紐付け
   if (documents && documents.length > 0) {
     await admin.from('project_documents').insert(
@@ -91,4 +100,56 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({ data: proposal }, { status: 201 })
+}
+
+// ============================================================
+// 管理者System通知: 新案件提案（fire-and-forget）
+// ============================================================
+
+const PROPOSAL_TYPE_LABELS: Record<string, string> = {
+  spot: '単発', recurring: '定期', hotel: 'ホテル', other: 'その他',
+}
+
+async function notifyAdminsOfProposalSubmitted(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any,
+  { proposalId, companyId, workerId, projectName, projectType }: {
+    proposalId: string; companyId: string; workerId: string
+    projectName: string; projectType: string
+  }
+): Promise<void> {
+  try {
+    // Worker名はサーバー側DBから取得（クライアント入力を信用しない）
+    const { data: workerProfile } = await adminClient
+      .from('profiles')
+      .select('name')
+      .eq('id', workerId)
+      .single()
+    const workerName = (workerProfile?.name as string | null) ?? 'Worker'
+
+    const typeLabel = PROPOSAL_TYPE_LABELS[projectType] ?? projectType
+
+    const { data: admins } = await adminClient
+      .from('profiles')
+      .select('id')
+      .eq('company_id', companyId)
+      .eq('role', 'admin')
+
+    if (!admins || admins.length === 0) return
+
+    const rows = admins.map((a: { id: string }) => ({
+      company_id:           companyId,
+      recipient_profile_id: a.id,
+      title:                '新しい案件提案が届きました',
+      body:                 `${workerName}さんから「${projectName}」（${typeLabel}）の案件提案が届きました。`,
+      type:                 'project_proposal_submitted',
+      is_read:              false,
+      target_url:           '/project-requests',
+    }))
+
+    const { error } = await adminClient.from('notifications').insert(rows)
+    if (error) console.error('[Admin通知] 提案通知挿入失敗:', error.message)
+  } catch (e) {
+    console.error('[Admin通知] 提案通知 予期しないエラー:', e)
+  }
 }

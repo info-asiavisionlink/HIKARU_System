@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createAdminClient } from '@/lib/supabase/server'
 import {
   generateReportContent,
   calcWorkDuration,
@@ -198,6 +198,17 @@ export async function POST(req: NextRequest) {
 
     if (saveErr) console.error('[report] save error:', saveErr.message)
 
+    // 初回報告のみ管理者へSystem通知（fire-and-forget・報告書処理を失敗させない）
+    if (saved?.id && version === 1) {
+      void notifyAdminsOfReportSubmitted({
+        reportId:    saved.id,
+        companyId:   job.company_id,
+        workerName:  (job as any).profiles?.name ?? 'Worker',
+        projectName: project?.name ?? '—',
+        overallScore,
+      })
+    }
+
     return Response.json({ success: true, data: { reportId: saved?.id, content } })
   } catch (err) {
     console.error('[report] error:', (err as Error).message)
@@ -205,6 +216,44 @@ export async function POST(req: NextRequest) {
       { success: false, error: { code: 'AI_ERROR', message: (err as Error).message } },
       { status: 500 }
     )
+  }
+}
+
+// ============================================================
+// 管理者System通知: 作業完了報告（fire-and-forget）
+// ============================================================
+
+async function notifyAdminsOfReportSubmitted({
+  reportId, companyId, workerName, projectName, overallScore,
+}: {
+  reportId: string; companyId: string; workerName: string
+  projectName: string; overallScore: number
+}): Promise<void> {
+  try {
+    const admin = createAdminClient()
+
+    const { data: admins } = await admin
+      .from('profiles')
+      .select('id')
+      .eq('company_id', companyId)
+      .eq('role', 'admin')
+
+    if (!admins || admins.length === 0) return
+
+    const rows = admins.map((a: { id: string }) => ({
+      company_id:           companyId,
+      recipient_profile_id: a.id,
+      title:                '作業完了報告が届きました',
+      body:                 `${workerName}さんが「${projectName}」の作業を完了しました。スコア: ${overallScore}点`,
+      type:                 'project_report_submitted',
+      is_read:              false,
+      target_url:           `/reports/${reportId}`,
+    }))
+
+    const { error } = await admin.from('notifications').insert(rows)
+    if (error) console.error('[Admin通知] 報告書通知挿入失敗:', error.message)
+  } catch (e) {
+    console.error('[Admin通知] 報告書通知 予期しないエラー:', e)
   }
 }
 
