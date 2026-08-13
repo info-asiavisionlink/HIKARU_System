@@ -233,5 +233,75 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: insertErr.message }, { status: 500 })
   }
 
+  // --- 管理者へSystem通知（fire-and-forget） ---
+  void notifyAdminsOfNewCorrection(admin, {
+    companyId:           profile.company_id,
+    workerId:            uid,
+    correctionId:        inserted.id,
+    attendanceRecordId:  attendance_record_id,
+    reason:              trimmedReason,
+  })
+
   return NextResponse.json({ correction: inserted }, { status: 201 })
+}
+
+// ---------------------------------------------------------------
+// helper: 同一company の管理者全員へ修正申請通知（fire-and-forget用）
+// ---------------------------------------------------------------
+async function notifyAdminsOfNewCorrection(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  admin: any,
+  opts: {
+    companyId:          string
+    workerId:           string
+    correctionId:       string
+    attendanceRecordId: string
+    reason:             string
+  }
+) {
+  try {
+    // Worker 名をサーバー側で取得（クライアント値は使わない）
+    const { data: workerProfile } = await admin
+      .from('profiles')
+      .select('name')
+      .eq('id', opts.workerId)
+      .single()
+    const workerName = (workerProfile?.name as string | null) ?? 'Worker'
+
+    // 勤怠の work_date を取得
+    const { data: attendanceRecord } = await admin
+      .from('attendance_records')
+      .select('work_date')
+      .eq('id', opts.attendanceRecordId)
+      .single()
+    const workDate: string = (attendanceRecord?.work_date as string | null) ?? ''
+    const dateLabel = workDate
+      ? new Date(workDate + 'T00:00:00').toLocaleDateString('ja-JP', { month: 'long', day: 'numeric' })
+      : ''
+
+    // 同一会社の管理者 profiles.id 一覧
+    const { data: admins } = await admin
+      .from('profiles')
+      .select('id')
+      .eq('company_id', opts.companyId)
+      .eq('role', 'admin')
+
+    if (!admins || admins.length === 0) return
+
+    // 管理者全員へ 1件ずつ通知を挿入
+    const rows = admins.map((a: { id: string }) => ({
+      company_id:           opts.companyId,
+      recipient_profile_id: a.id,
+      title:                '新しい勤怠修正申請があります',
+      body:                 `${workerName}さんから${dateLabel}の勤怠修正申請が届きました。\n理由: ${opts.reason}`,
+      type:                 'attendance_correction_submitted',
+      is_read:              false,
+      target_url:           `/attendance/corrections/${opts.correctionId}`,
+    }))
+
+    const { error } = await admin.from('notifications').insert(rows)
+    if (error) console.error('[Admin通知] 修正申請通知挿入失敗:', error.message)
+  } catch (e) {
+    console.error('[Admin通知] 予期しないエラー:', e)
+  }
 }
