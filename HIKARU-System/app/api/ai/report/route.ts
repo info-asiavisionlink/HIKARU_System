@@ -243,7 +243,6 @@ async function notifyAdminsOfReportSubmitted({
       .select('id')
       .eq('company_id', companyId)
       .eq('role', 'admin')
-      .neq('id', workerId)
 
     if (!admins || admins.length === 0) return
 
