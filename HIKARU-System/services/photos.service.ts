@@ -12,6 +12,68 @@ export interface PhotoRow {
 
 const BUCKET = 'photos'
 
+// browser Supabase auth.getSession()ハングを回避するSigned URL方式でアップロードする。
+// Before/Afterページはこちらを使用。
+export async function uploadPhotoViaSignedUrl(
+  jobId: string,
+  spotId: string,
+  type: 'before' | 'after',
+  file: File
+): Promise<PhotoRow | null> {
+  const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
+
+  try {
+    // Step 1: サーバーからSigned Upload URLを取得（認証・ownership確認はサーバー側）
+    const signedRes = await fetch('/api/photos/signed-url', {
+      method:      'POST',
+      headers:     { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body:        JSON.stringify({ jobId, spotId, photoType: type, ext }),
+    })
+
+    if (!signedRes.ok) {
+      console.error('[photos] signed-url error:', signedRes.status)
+      return null
+    }
+
+    const { signedUrl, path } = await signedRes.json()
+
+    // Step 2: Signed URLへ直接ファイルをPUT（Supabaseクライアント不使用・auth.getSession()不使用）
+    const formData = new FormData()
+    formData.append('cacheControl', '3600')
+    formData.append('', file)
+
+    const uploadRes = await fetch(signedUrl, {
+      method: 'PUT',
+      body:   formData,
+    })
+
+    if (!uploadRes.ok) {
+      console.error('[photos] storage PUT error:', uploadRes.status)
+      return null
+    }
+
+    // Step 3: サーバーへ写真レコード保存依頼
+    const recordRes = await fetch('/api/photos/record', {
+      method:      'POST',
+      headers:     { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body:        JSON.stringify({ jobId, spotId, photoType: type, storagePath: path }),
+    })
+
+    if (!recordRes.ok) {
+      console.error('[photos] record error:', recordRes.status)
+      return null
+    }
+
+    const { photo } = await recordRes.json()
+    return photo as PhotoRow
+  } catch (e) {
+    console.error('[photos] uploadPhotoViaSignedUrl error:', e)
+    return null
+  }
+}
+
 export async function uploadPhoto(
   jobId: string,
   spotId: string,
