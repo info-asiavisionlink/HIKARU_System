@@ -203,6 +203,7 @@ export async function POST(req: NextRequest) {
       void notifyAdminsOfReportSubmitted({
         reportId:    saved.id,
         companyId:   job.company_id,
+        workerId:    user.id,
         workerName:  (job as any).profiles?.name ?? 'Worker',
         projectName: project?.name ?? '—',
         overallScore,
@@ -224,9 +225,9 @@ export async function POST(req: NextRequest) {
 // ============================================================
 
 async function notifyAdminsOfReportSubmitted({
-  reportId, companyId, workerName, projectName, overallScore,
+  reportId, companyId, workerId, workerName, projectName, overallScore,
 }: {
-  reportId: string; companyId: string; workerName: string
+  reportId: string; companyId: string; workerId: string; workerName: string
   projectName: string; overallScore: number
 }): Promise<void> {
   try {
@@ -237,6 +238,7 @@ async function notifyAdminsOfReportSubmitted({
       .select('id')
       .eq('company_id', companyId)
       .eq('role', 'admin')
+      .neq('id', workerId)
 
     if (!admins || admins.length === 0) return
 
