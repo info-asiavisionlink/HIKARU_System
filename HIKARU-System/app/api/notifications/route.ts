@@ -1,8 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 
+// Worker向け通知のみ表示する。ADMIN_ONLYタイプ(attendance_correction_submitted等)は除外。
+// employee+admin兼任ユーザーが管理者向け通知をWorker画面で見てしまう問題を防ぐ。
+const WORKER_NOTIFICATION_TYPES = [
+  'attendance_correction_approved',
+  'attendance_correction_rejected',
+  'expense_approved',
+  'expense_rejected',
+  'shift_created',
+  'shift_updated',
+  'shift_cancelled',
+  'shift_confirmed',
+  'project_assigned',
+  'project_unassigned',
+  'project_cancelled',
+  'project_paused',
+  'project_completed',
+  'project_details_changed',
+]
+
 // GET /api/notifications
 // ログインWorker本人の通知のみ返す。company_id + recipient_profile_id で二重確認。
+// WORKER_NOTIFICATION_TYPES でWorker向け通知のみに絞る（ADMIN_ONLY type混入防止）。
 export async function GET(req: NextRequest) {
   const uid = req.cookies.get('hk_s_uid')?.value
   if (!uid) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
@@ -25,6 +45,7 @@ export async function GET(req: NextRequest) {
     .select('id, title, body, type, is_read, target_url, created_at')
     .eq('recipient_profile_id', uid)
     .eq('company_id', profile.company_id)
+    .in('type', WORKER_NOTIFICATION_TYPES)
     .order('created_at', { ascending: false })
     .limit(50)
 

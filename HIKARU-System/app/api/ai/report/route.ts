@@ -201,8 +201,9 @@ export async function POST(req: NextRequest) {
 
     if (saveErr) console.error('[report] save error:', saveErr.message)
 
-    // 初回報告のみ管理者へSystem通知（fire-and-forget・報告書処理を失敗させない）
-    if (saved?.id && version === 1) {
+    // 報告書生成のたびに管理者へSystem通知（fire-and-forget・報告書処理を失敗させない）
+    // version === 1 条件を撤廃: 再生成も業務上重要なイベントであるため毎回通知する
+    if (saved?.id) {
       void notifyAdminsOfReportSubmitted({
         reportId:    saved.id,
         companyId:   job.company_id,
@@ -210,6 +211,7 @@ export async function POST(req: NextRequest) {
         workerName:  (job as any).profiles?.name ?? 'Worker',
         projectName: project?.name ?? '—',
         overallScore,
+        version,
       })
     }
 
@@ -228,10 +230,10 @@ export async function POST(req: NextRequest) {
 // ============================================================
 
 async function notifyAdminsOfReportSubmitted({
-  reportId, companyId, workerId, workerName, projectName, overallScore,
+  reportId, companyId, workerId, workerName, projectName, overallScore, version,
 }: {
   reportId: string; companyId: string; workerId: string; workerName: string
-  projectName: string; overallScore: number
+  projectName: string; overallScore: number; version: number
 }): Promise<void> {
   try {
     const admin = createAdminClient()
@@ -245,11 +247,12 @@ async function notifyAdminsOfReportSubmitted({
 
     if (!admins || admins.length === 0) return
 
+    const title = version === 1 ? '作業完了報告が届きました' : '報告書が更新されました'
     const rows = admins.map((a: { id: string }) => ({
       company_id:           companyId,
       recipient_profile_id: a.id,
-      title:                '作業完了報告が届きました',
-      body:                 `${workerName}さんが「${projectName}」の作業を完了しました。スコア: ${overallScore}点`,
+      title,
+      body:                 `${workerName}さんが「${projectName}」の報告書を${version === 1 ? '提出' : '更新'}しました。スコア: ${overallScore}点`,
       type:                 'project_report_submitted',
       is_read:              false,
       target_url:           `/reports/${reportId}`,
