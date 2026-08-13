@@ -3,7 +3,7 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Home, Briefcase, Calendar, CalendarCheck, Bell, User, X, LogOut, Link2, ClockArrowUp, TrendingUp, Zap, RefreshCw, Hotel, Receipt } from 'lucide-react'
+import { Home, Briefcase, Calendar, CalendarCheck, Bell, User, X, LogOut, Link2, ClockArrowUp, Receipt } from 'lucide-react'
 import { cn } from '@hikaru/ui'
 
 const GOLD = 'oklch(0.73 0.12 78)'
@@ -25,16 +25,6 @@ const navItems: NavItem[] = [
     ],
   },
   { label: '経費申請',     href: '/expenses',       icon: Receipt },
-  {
-    label: '営業成績',
-    href: '/sales',
-    icon: TrendingUp,
-    children: [
-      { label: '単発案件', href: '/sales/new/spot' },
-      { label: '定期案件', href: '/sales/new/recurring' },
-      { label: 'ホテル案件', href: '/sales/new/hotel' },
-    ],
-  },
   { label: '通知',         href: '/notifications',  icon: Bell },
   { label: 'Google連携',   href: '/google',         icon: Link2 },
   { label: 'プロフィール', href: '/profile',        icon: User },
