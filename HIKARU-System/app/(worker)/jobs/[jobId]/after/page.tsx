@@ -2,9 +2,8 @@
 
 import * as React from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
-import { getTodayJob, completeJob } from '@/services/jobs.service'
-import { uploadPhoto, getJobPhotos, type PhotoRow } from '@/services/photos.service'
+import { completeJob } from '@/services/jobs.service'
+import { uploadPhoto, type PhotoRow } from '@/services/photos.service'
 import { WorkerHeader } from '@/components/layouts/WorkerHeader'
 import { PhotoCapture } from '@/components/worker/PhotoCapture'
 import { WorkProgress } from '@/components/worker/WorkProgress'
@@ -23,25 +22,26 @@ export default function AfterPage() {
 
   React.useEffect(() => {
     async function load() {
-      const supabase = createClient()
+      try {
+        // todayJob + photo_spots + 既存写真を一括取得（サーバーAPI・ブラウザSupabase auth.getUser()ハング回避）
+        const res = await fetch(`/api/jobs/${projectId}`, {
+          credentials: 'include',
+          cache:       'no-store',
+        })
+        if (!res.ok) { router.push(`/jobs/${projectId}`); return }
+        const { photoSpots, todayJob, photos } = await res.json()
 
-      const job = await getTodayJob(projectId)
-      if (!job) { router.push(`/jobs/${projectId}`); return }
-      if (job.status === 'completed') { router.push(`/jobs/${projectId}`); return }
-      setJobId(job.id)
+        if (!todayJob) { router.push(`/jobs/${projectId}`); return }
+        if (todayJob.status === 'completed') { router.push(`/jobs/${projectId}`); return }
 
-      // project_id ベースで撮影箇所を取得（migration 008 で追加）
-      const { data: spotsData } = await supabase
-        .from('photo_spots')
-        .select('*')
-        .eq('project_id', projectId)
-        .order('order_num', { ascending: true })
-      setSpots(spotsData ?? [])
-
-      const existing = await getJobPhotos(job.id)
-      setAllPhotos(existing)
-
-      setLoading(false)
+        setJobId(todayJob.id)
+        setSpots(photoSpots ?? [])
+        setAllPhotos(photos ?? [])
+      } catch {
+        router.push(`/jobs/${projectId}`)
+      } finally {
+        setLoading(false)
+      }
     }
     load()
   }, [projectId, router])
