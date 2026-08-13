@@ -3,7 +3,6 @@
 import * as React from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase/client'
 import { WorkerHeader } from '@/components/layouts/WorkerHeader'
 import { cn } from '@hikaru/ui'
 import {
@@ -106,14 +105,24 @@ export default function ManualPage() {
 
   React.useEffect(() => {
     async function load() {
-      const supabase = createClient()
-      const { data: project } = await supabase.from('projects').select('name').eq('id', projectId).single()
-      if (project) setProjectName(project.name)
-
-      const { data } = await supabase
-        .from('manuals').select('*').eq('project_id', projectId).order('order_num', { ascending: true })
-      setManuals((data as Manual[]) ?? [])
-      setLoading(false)
+      try {
+        const [jobRes, manualsRes] = await Promise.all([
+          fetch(`/api/jobs/${projectId}`, { credentials: 'include', cache: 'no-store' }),
+          fetch(`/api/jobs/${projectId}/manuals`, { credentials: 'include', cache: 'no-store' }),
+        ])
+        if (jobRes.ok) {
+          const { project } = await jobRes.json()
+          if (project?.name) setProjectName(project.name)
+        }
+        if (manualsRes.ok) {
+          const { manuals } = await manualsRes.json()
+          setManuals((manuals as Manual[]) ?? [])
+        }
+      } catch {
+        // エラー時はmanuals空のまま表示
+      } finally {
+        setLoading(false)
+      }
     }
     load()
   }, [projectId])
