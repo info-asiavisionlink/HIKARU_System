@@ -143,6 +143,7 @@ async function notifyAdminsOfProposalSubmitted(
       title:                '新しい案件提案が届きました',
       body:                 `${workerName}さんから「${projectName}」（${typeLabel}）の案件提案が届きました。`,
       type:                 'project_proposal_submitted',
+      target_app:           'console',
       is_read:              false,
       target_url:           '/project-requests',
     }))

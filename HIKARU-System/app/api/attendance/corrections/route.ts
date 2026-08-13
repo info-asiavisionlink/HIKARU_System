@@ -295,6 +295,7 @@ async function notifyAdminsOfNewCorrection(
       title:                '新しい勤怠修正申請があります',
       body:                 `${workerName}さんから${dateLabel}の勤怠修正申請が届きました。\n理由: ${opts.reason}`,
       type:                 'attendance_correction_submitted',
+      target_app:           'console',
       is_read:              false,
       target_url:           `/attendance/corrections/${opts.correctionId}`,
     }))

@@ -254,6 +254,7 @@ async function notifyAdminsOfReportSubmitted({
       title,
       body:                 `${workerName}さんが「${projectName}」の報告書を${version === 1 ? '提出' : '更新'}しました。スコア: ${overallScore}点`,
       type:                 'project_report_submitted',
+      target_app:           'console',
       is_read:              false,
       target_url:           `/reports/${reportId}`,
     }))

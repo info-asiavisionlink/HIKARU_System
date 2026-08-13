@@ -87,6 +87,7 @@ async function notifyAdminsOfExpenseSubmitted(expenseId: string, workerId: strin
       title:                '新しい経費申請があります',
       body,
       type:                 'expense_submitted',
+      target_app:           'console',
       is_read:              false,
       target_url:           `/expenses/${expenseId}`,
     }))
