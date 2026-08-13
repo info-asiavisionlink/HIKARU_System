@@ -10,6 +10,9 @@ import {
 } from '@/modules/report-ai'
 import type { SpotInput } from '@/modules/report-ai/prompts'
 
+// Vercel Pro: Node.js runtime — allow up to 90s for OpenAI(60s) + DB ops + response margin
+export const maxDuration = 90
+
 // ============================================================
 // POST /api/ai/report — 報告書生成
 // ============================================================

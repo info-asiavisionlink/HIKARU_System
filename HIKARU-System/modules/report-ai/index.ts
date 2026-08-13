@@ -77,25 +77,29 @@ export async function generateReportContent(params: GenerateParams): Promise<{
 }> {
   const openai = createOpenAIClient()
 
-  const response = await openai.chat.completions.create({
-    model: OPENAI_MODELS.REPORT,
-    messages: [
-      {
-        role: 'user',
-        content: REPORT_GENERATION_PROMPT(
-          params.storeName,
-          params.clientName,
-          params.workDate,
-          params.workerName,
-          params.spots,
-          params.overallScore
-        ),
-      },
-    ],
-    response_format: { type: 'json_object' },
-    temperature: 0.6,
-    max_tokens: 2000,
-  })
+  // timeout must be shorter than Server maxDuration(90s) so we can return a JSON error before Vercel kills the function
+  const response = await openai.chat.completions.create(
+    {
+      model: OPENAI_MODELS.REPORT,
+      messages: [
+        {
+          role: 'user',
+          content: REPORT_GENERATION_PROMPT(
+            params.storeName,
+            params.clientName,
+            params.workDate,
+            params.workerName,
+            params.spots,
+            params.overallScore
+          ),
+        },
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0.6,
+      max_tokens: 2000,
+    },
+    { timeout: 60_000 },
+  )
 
   const raw = response.choices[0]?.message.content ?? '{}'
   const parsed = JSON.parse(raw)
