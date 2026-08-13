@@ -3,10 +3,7 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { useRouter, useParams } from 'next/navigation'
-import { getWorkerProject } from '@/services/worker-projects.service'
 import { getOrCreateTodayJob, completeJob } from '@/services/jobs.service'
-import { getJobPhotos } from '@/services/photos.service'
-import { createClient } from '@/lib/supabase/client'
 import { WorkerHeader } from '@/components/layouts/WorkerHeader'
 import { WorkProgress, SpotStatusDot } from '@/components/worker/WorkProgress'
 import { cn } from '@hikaru/ui'
@@ -38,38 +35,36 @@ export default function JobDetailPage() {
   const [activeJob, setActiveJob] = React.useState<any>(null)
   const [photos, setPhotos] = React.useState<any[]>([])
   const [loading, setLoading] = React.useState(true)
+  const [loadError, setLoadError] = React.useState<string | null>(null)
   const [starting, setStarting] = React.useState(false)
   const [completing, setCompleting] = React.useState(false)
 
   React.useEffect(() => {
     async function load() {
-      const supabase = createClient()
-
-      // サーバーサイドで workerId を取得（getUser() ハング回避）
-      const meRes = await fetch('/api/auth/me', { credentials: 'include', cache: 'no-store' })
-      const { user } = meRes.ok ? await meRes.json() : { user: null }
-
-      const [projectRes] = await Promise.all([
-        getWorkerProject(projectId, user?.id),
-      ])
-      setProject(projectRes)
-
-      // Load photo spots (project_id ベース)
-      const { data: spots } = await supabase
-        .from('photo_spots')
-        .select('*')
-        .eq('project_id', projectId)
-        .order('order_num', { ascending: true })
-      setPhotoSpots(spots ?? [])
-
-      // Load today's job if exists
-      if (projectRes?.todayJob) {
-        setActiveJob(projectRes.todayJob)
-        const ph = await getJobPhotos(projectRes.todayJob.id)
-        setPhotos(ph)
+      try {
+        // ブラウザSupabaseクライアントを使わずサーバーAPIで一括取得
+        // （refreshingDeferred ハングによる無限スピナーを回避）
+        const res = await fetch(`/api/jobs/${projectId}`, {
+          credentials: 'include',
+          cache: 'no-store',
+        })
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          setLoadError((body as { error?: string }).error ?? '案件を取得できませんでした')
+          return
+        }
+        const { project, photoSpots, todayJob, photos } = await res.json()
+        setProject(project ?? null)
+        setPhotoSpots(photoSpots ?? [])
+        if (todayJob) {
+          setActiveJob(todayJob)
+          setPhotos(photos ?? [])
+        }
+      } catch {
+        setLoadError('通信エラーが発生しました')
+      } finally {
+        setLoading(false)
       }
-
-      setLoading(false)
     }
     load()
   }, [projectId])
@@ -138,7 +133,9 @@ export default function JobDetailPage() {
       <div className="min-h-dvh bg-[var(--color-background)]">
         <WorkerHeader title="案件詳細" showBack />
         <div className="flex flex-col items-center justify-center py-16">
-          <p className="text-[var(--color-muted-foreground)]">案件が見つかりませんでした</p>
+          <p className="text-[var(--color-muted-foreground)]">
+            {loadError ?? '案件が見つかりませんでした'}
+          </p>
           <button onClick={() => router.back()} className="mt-4 text-sm text-[var(--color-primary)]">
             戻る
           </button>
