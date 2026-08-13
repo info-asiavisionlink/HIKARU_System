@@ -86,9 +86,9 @@ function ReportDocument({ content, reportVersion, reportDate }: {
   const { project, store, client, job, spots, summary } = content
 
   return (
-    <div className="report-page bg-white max-w-[800px] mx-auto shadow-[var(--shadow-xl)] print:shadow-none">
+    <div className="report-page bg-white max-w-[800px] mx-auto shadow-[var(--shadow-xl)] print:shadow-none" style={{ color: '#111' }}>
       {/* ===== ヘッダー ===== */}
-      <div className="bg-[var(--color-primary)] text-white px-8 py-6 print:px-6 print:py-5">
+      <div className="bg-[var(--color-primary)] text-white px-8 py-6 print:px-6 print:py-5" style={{ color: 'white' }}>
         <div className="flex items-start justify-between">
           <div>
             <p className="text-xs font-medium opacity-70 tracking-widest uppercase">HIKARU Quality Report</p>
