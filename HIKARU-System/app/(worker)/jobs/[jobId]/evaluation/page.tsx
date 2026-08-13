@@ -3,8 +3,7 @@
 import * as React from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase/client'
-import { getTodayJob, completeJob } from '@/services/jobs.service'
+import { completeJob } from '@/services/jobs.service'
 import {
   evaluateAllSpots, loadEvaluations,
   getScoreInfo, RECOMMENDATION_CONFIG,
@@ -215,24 +214,30 @@ export default function EvaluationPage() {
   // 初期化
   React.useEffect(() => {
     async function init() {
-      const supabase = createClient()
-      const job = await getTodayJob(projectId)
-      if (!job) { router.push(`/jobs/${projectId}`); return }
-      setJobId(job.id)
+      try {
+        // todayJob + 写真をサーバーAPIで取得（ブラウザSupabase auth.getUser()ハング回避）
+        const res = await fetch(`/api/jobs/${projectId}`, {
+          credentials: 'include',
+          cache:       'no-store',
+        })
+        if (!res.ok) { router.push(`/jobs/${projectId}`); return }
+        const { todayJob, photos } = await res.json()
+        if (!todayJob) { router.push(`/jobs/${projectId}`); return }
+        setJobId(todayJob.id)
+        setPhotos(photos ?? [])
 
-      // 写真データ
-      const { data: ph } = await supabase.from('photos').select('*').eq('job_id', job.id)
-      setPhotos(ph ?? [])
+        // 既存の評価
+        const existing = await loadEvaluations(todayJob.id)
+        setEvaluations(existing)
 
-      // 既存の評価
-      const existing = await loadEvaluations(job.id)
-      setEvaluations(existing)
-
-      setLoading(false)
-
-      // ?run=1 なら自動実行
-      if (autoRun && existing.length === 0) {
-        setTimeout(() => runEvaluation(job.id), 300)
+        // ?run=1 なら自動実行
+        if (autoRun && existing.length === 0) {
+          setTimeout(() => runEvaluation(todayJob.id), 300)
+        }
+      } catch {
+        router.push(`/jobs/${projectId}`)
+      } finally {
+        setLoading(false)
       }
     }
     init()
