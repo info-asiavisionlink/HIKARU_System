@@ -3,7 +3,6 @@
 import * as React from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { completeJob } from '@/services/jobs.service'
 import {
   evaluateAllSpots, loadEvaluations,
   getScoreInfo, RECOMMENDATION_CONFIG,
@@ -265,14 +264,25 @@ export default function EvaluationPage() {
   async function handleComplete() {
     if (!jobId) return
     setCompleting(true)
-    const ok = await completeJob(jobId)
-    if (ok) {
-      toast.success('作業完了しました！お疲れ様でした！')
-      router.replace(`/jobs`)
-    } else {
-      toast.error('完了処理に失敗しました')
+    try {
+      const res = await fetch('/api/jobs/complete', {
+        method:      'POST',
+        credentials: 'include',
+        headers:     { 'Content-Type': 'application/json' },
+        body:        JSON.stringify({ jobId }),
+      })
+      if (res.ok) {
+        toast.success('作業完了しました！お疲れ様でした！')
+        router.replace(`/jobs`)
+      } else {
+        const json = await res.json().catch(() => ({}))
+        toast.error((json as { error?: string }).error ?? '完了処理に失敗しました')
+      }
+    } catch {
+      toast.error('通信エラーが発生しました')
+    } finally {
+      setCompleting(false)
     }
-    setCompleting(false)
   }
 
   // 写真URLマップ

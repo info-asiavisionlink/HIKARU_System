@@ -3,7 +3,6 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { useRouter, useParams } from 'next/navigation'
-import { completeJob } from '@/services/jobs.service'
 import { WorkerHeader } from '@/components/layouts/WorkerHeader'
 import { WorkProgress, SpotStatusDot } from '@/components/worker/WorkProgress'
 import { cn } from '@hikaru/ui'
@@ -108,14 +107,25 @@ export default function JobDetailPage() {
     }
 
     setCompleting(true)
-    const ok = await completeJob(activeJob.id)
-    if (ok) {
-      setActiveJob((prev: any) => ({ ...prev, status: 'completed', completed_at: new Date().toISOString() }))
-      toast.success('作業完了しました！お疲れ様でした！')
-    } else {
-      toast.error('完了処理に失敗しました')
+    try {
+      const res = await fetch('/api/jobs/complete', {
+        method:      'POST',
+        credentials: 'include',
+        headers:     { 'Content-Type': 'application/json' },
+        body:        JSON.stringify({ jobId: activeJob.id }),
+      })
+      if (res.ok) {
+        setActiveJob((prev: any) => ({ ...prev, status: 'completed', completed_at: new Date().toISOString() }))
+        toast.success('作業完了しました！お疲れ様でした！')
+      } else {
+        const json = await res.json().catch(() => ({}))
+        toast.error((json as { error?: string }).error ?? '完了処理に失敗しました')
+      }
+    } catch {
+      toast.error('通信エラーが発生しました')
+    } finally {
+      setCompleting(false)
     }
-    setCompleting(false)
   }
 
   // Photo stats

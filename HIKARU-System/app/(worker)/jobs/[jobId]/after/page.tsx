@@ -2,7 +2,6 @@
 
 import * as React from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { completeJob } from '@/services/jobs.service'
 import { uploadPhotoViaSignedUrl, type PhotoRow } from '@/services/photos.service'
 import { WorkerHeader } from '@/components/layouts/WorkerHeader'
 import { PhotoCapture } from '@/components/worker/PhotoCapture'
@@ -84,14 +83,25 @@ export default function AfterPage() {
       return
     }
     setCompleting(true)
-    const ok = await completeJob(jobId)
-    if (ok) {
-      toast.success('作業完了しました！お疲れ様でした！')
-      router.replace(`/jobs/${projectId}`)
-    } else {
-      toast.error('完了処理に失敗しました')
+    try {
+      const res = await fetch('/api/jobs/complete', {
+        method:      'POST',
+        credentials: 'include',
+        headers:     { 'Content-Type': 'application/json' },
+        body:        JSON.stringify({ jobId }),
+      })
+      if (res.ok) {
+        toast.success('作業完了しました！お疲れ様でした！')
+        router.replace(`/jobs/${projectId}`)
+      } else {
+        const json = await res.json().catch(() => ({}))
+        toast.error((json as { error?: string }).error ?? '完了処理に失敗しました')
+      }
+    } catch {
+      toast.error('通信エラーが発生しました')
+    } finally {
+      setCompleting(false)
     }
-    setCompleting(false)
   }
 
   const afterCount = spots.filter((s) => !!getSpotPhoto(s.id, 'after')).length
