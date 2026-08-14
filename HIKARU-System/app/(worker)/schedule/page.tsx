@@ -2,7 +2,6 @@
 
 import * as React from 'react'
 import { ChevronLeft, ChevronRight, CalendarDays, MapPin, Clock, Plus, X, Loader2 } from 'lucide-react'
-import { createClient } from '@/lib/supabase/client'
 
 const GOLD   = 'oklch(0.73 0.12 78)'
 const CYAN   = 'oklch(0.85 0.18 198)'
@@ -200,7 +199,7 @@ export default function SchedulePage() {
   const [baseDate, setBaseDate]       = React.useState(today)
   const [shifts,   setShifts]         = React.useState<Shift[]>([])
   const [loading,  setLoading]        = React.useState(true)
-  const [realtimeConnected, setRealtimeConnected] = React.useState(false)
+  const [error,    setError]          = React.useState<string | null>(null)
   const [showForm, setShowForm]       = React.useState(false)
   const [editShift, setEditShift]     = React.useState<Shift | null>(null)
   const [assignedProjects, setAssignedProjects] = React.useState<AssignedProject[]>([])
@@ -227,28 +226,23 @@ export default function SchedulePage() {
 
   const fetchShifts = React.useCallback(async () => {
     setLoading(true)
+    setError(null)
     try {
       const res = await fetch(`/api/shifts?date_from=${dateFrom}&date_to=${dateTo}`, { credentials: 'include' })
-      if (res.ok) {
-        const { shifts: data } = await res.json()
-        setShifts(data ?? [])
+      if (!res.ok) {
+        setError('シフトを取得できませんでした')
+        return
       }
+      const { shifts: data } = await res.json()
+      setShifts(data ?? [])
+    } catch {
+      setError('通信エラーが発生しました')
     } finally {
       setLoading(false)
     }
   }, [dateFrom, dateTo])
 
   React.useEffect(() => { fetchShifts() }, [fetchShifts])
-
-  // Supabase Realtime: 自分のシフトが変更されたら自動更新
-  React.useEffect(() => {
-    const supabase = createClient()
-    const channel = supabase
-      .channel('shifts-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'shifts' }, () => { fetchShifts() })
-      .subscribe(status => { setRealtimeConnected(status === 'SUBSCRIBED') })
-    return () => { supabase.removeChannel(channel) }
-  }, [fetchShifts])
 
   const todayStr = formatDate(today)
 
@@ -275,16 +269,7 @@ export default function SchedulePage() {
     <div className="px-4 py-4 space-y-4">
       {/* ヘッダー */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <h1 className="text-lg font-bold" style={{ color: 'oklch(0.92 0.008 75)' }}>スケジュール</h1>
-          <div className="flex items-center gap-1">
-            <span className={`h-1.5 w-1.5 rounded-full ${realtimeConnected ? 'animate-pulse' : ''}`}
-              style={{ background: realtimeConnected ? 'oklch(0.72 0.18 150)' : 'oklch(0.35 0.005 75)' }} />
-            <span className="text-[8px] uppercase tracking-widest" style={{ color: 'oklch(0.40 0.005 75)' }}>
-              {realtimeConnected ? 'LIVE' : 'connecting'}
-            </span>
-          </div>
-        </div>
+        <h1 className="text-lg font-bold" style={{ color: 'oklch(0.92 0.008 75)' }}>スケジュール</h1>
         {/* シフト登録ボタン */}
         <button onClick={openNewForm}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold"
@@ -349,6 +334,13 @@ export default function SchedulePage() {
         <div className="flex items-center justify-center h-32">
           <div className="h-5 w-5 rounded-full border-2 border-t-transparent animate-spin"
             style={{ borderColor: `${GOLD}60`, borderTopColor: 'transparent' }} />
+        </div>
+      ) : error ? (
+        <div className="flex flex-col items-center justify-center h-32 gap-2">
+          <p className="text-sm text-center" style={{ color: 'oklch(0.65 0.18 27)' }}>{error}</p>
+          <button onClick={fetchShifts} className="text-xs underline" style={{ color: GOLD }}>
+            再読み込み
+          </button>
         </div>
       ) : (
         <div className="space-y-3">
