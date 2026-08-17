@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createAdminClient } from '@/lib/supabase/server'
 
 // POST /api/expenses/[id]/submit - draft → submitted
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -25,6 +25,49 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  // 将来: LINE通知 expense_submitted イベントをここでキック
+
+  // 管理者へSystem通知（fire-and-forget・業務処理に影響させない）
+  void notifyAdminsOfExpenseSubmitted(createAdminClient(), id, uid)
+
   return NextResponse.json({ expense: data })
+}
+
+// ---------------------------------------------------------------
+// 管理者System通知: 経費申請
+// ---------------------------------------------------------------
+async function notifyAdminsOfExpenseSubmitted(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  admin:     any,
+  expenseId: string,
+  workerId:  string,
+): Promise<void> {
+  try {
+    const { data: workerProfile } = await admin
+      .from('profiles').select('name, company_id').eq('id', workerId).single()
+    if (!workerProfile?.company_id) return
+
+    const workerName = (workerProfile as { name?: string; company_id: string }).name ?? '作業者'
+    const companyId  = (workerProfile as { company_id: string }).company_id
+
+    const { data: admins } = await admin
+      .from('profiles').select('id').eq('company_id', companyId).eq('role', 'admin')
+
+    if (!admins?.length) return
+
+    const rows = (admins as { id: string }[]).map((a) => ({
+      company_id:           companyId,
+      recipient_profile_id: a.id,
+      title:                '経費申請が届きました',
+      body:                 `${workerName}さんから経費申請が届きました。`,
+      type:                 'expense_submitted',
+      target_app:           'console',
+      is_read:              false,
+      target_url:           `/expenses/${expenseId}`,
+    }))
+
+    const { error } = await admin.from('notifications').insert(rows)
+    if (error) console.error('[Admin通知] 経費申請通知挿入失敗:', error.message)
+  } catch (e) {
+    console.error('[Admin通知] 経費申請通知 予期しないエラー:', e)
+  }
 }

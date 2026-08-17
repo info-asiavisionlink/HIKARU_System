@@ -233,5 +233,45 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: insertErr.message }, { status: 500 })
   }
 
+  // 管理者へSystem通知（fire-and-forget・業務処理に影響させない）
+  void notifyAdminsOfCorrectionSubmitted(admin, profile.company_id, uid)
+
   return NextResponse.json({ correction: inserted }, { status: 201 })
+}
+
+// ---------------------------------------------------------------
+// 管理者System通知: 勤怠修正申請
+// ---------------------------------------------------------------
+async function notifyAdminsOfCorrectionSubmitted(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  admin: any,
+  companyId: string,
+  workerId:  string,
+): Promise<void> {
+  try {
+    const { data: workerProfile } = await admin
+      .from('profiles').select('name').eq('id', workerId).single()
+    const workerName = (workerProfile as { name?: string } | null)?.name ?? '作業者'
+
+    const { data: admins } = await admin
+      .from('profiles').select('id').eq('company_id', companyId).eq('role', 'admin')
+
+    if (!admins?.length) return
+
+    const rows = (admins as { id: string }[]).map((a) => ({
+      company_id:           companyId,
+      recipient_profile_id: a.id,
+      title:                '勤怠修正申請が届きました',
+      body:                 `${workerName}さんから勤怠修正申請が届きました。`,
+      type:                 'attendance_correction_submitted',
+      target_app:           'console',
+      is_read:              false,
+      target_url:           '/attendance/corrections',
+    }))
+
+    const { error } = await admin.from('notifications').insert(rows)
+    if (error) console.error('[Admin通知] 勤怠修正申請通知挿入失敗:', error.message)
+  } catch (e) {
+    console.error('[Admin通知] 勤怠修正申請通知 予期しないエラー:', e)
+  }
 }

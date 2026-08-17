@@ -74,6 +74,9 @@ export async function POST(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
+  // 管理者へSystem通知（fire-and-forget・業務処理に影響させない）
+  void notifyAdminsOfProposalSubmitted(admin, proposal.id, profile.company_id, user.id, project_name)
+
   // ドキュメントを紐付け
   if (documents && documents.length > 0) {
     await admin.from('project_documents').insert(
@@ -91,4 +94,43 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({ data: proposal }, { status: 201 })
+}
+
+// ---------------------------------------------------------------
+// 管理者System通知: 案件提案
+// ---------------------------------------------------------------
+async function notifyAdminsOfProposalSubmitted(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  admin:       any,
+  proposalId:  string,
+  companyId:   string,
+  workerId:    string,
+  projectName: string,
+): Promise<void> {
+  try {
+    const { data: workerProfile } = await admin
+      .from('profiles').select('name').eq('id', workerId).single()
+    const workerName = (workerProfile as { name?: string } | null)?.name ?? '作業者'
+
+    const { data: admins } = await admin
+      .from('profiles').select('id').eq('company_id', companyId).eq('role', 'admin')
+
+    if (!admins?.length) return
+
+    const rows = (admins as { id: string }[]).map((a) => ({
+      company_id:           companyId,
+      recipient_profile_id: a.id,
+      title:                '新しい案件提案が届きました',
+      body:                 `${workerName}さんから「${projectName}」の案件提案が届きました。`,
+      type:                 'project_proposal_submitted',
+      target_app:           'console',
+      is_read:              false,
+      target_url:           '/proposals',
+    }))
+
+    const { error } = await admin.from('notifications').insert(rows)
+    if (error) console.error('[Admin通知] 案件提案通知挿入失敗:', error.message)
+  } catch (e) {
+    console.error('[Admin通知] 案件提案通知 予期しないエラー:', e)
+  }
 }
