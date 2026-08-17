@@ -128,7 +128,7 @@ export default function ManualPage() {
   const others   = filtered.filter((m) => m.type !== 'note')
 
   return (
-    <div className="min-h-dvh bg-[var(--color-background)]">
+    <div className="min-h-[calc(100dvh_-_var(--header-height))] bg-[var(--color-background)]">
       <WorkerHeader
         title="マニュアル"
         showBack
