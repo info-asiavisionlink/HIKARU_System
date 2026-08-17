@@ -2,12 +2,10 @@
 
 import * as React from 'react'
 import { useParams } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
 import {
   loadChatHistory, sendChatMessage, parseAIResponse,
   type ChatMessageRow, type ResponseSection,
 } from '@/services/chat.service'
-import { getTodayJob } from '@/services/jobs.service'
 import { WorkerHeader } from '@/components/layouts/WorkerHeader'
 import { WELCOME_MESSAGE } from '@/modules/manual-ai/prompts'
 import { cn } from '@hikaru/ui'
@@ -170,24 +168,26 @@ export default function ChatPage() {
   // 初期化
   React.useEffect(() => {
     async function init() {
-      const supabase = createClient()
+      try {
+        // ブラウザSupabase auth/session ハングを回避するサーバーAPI経由でproject・todayJob取得
+        const res = await fetch(`/api/jobs/${projectId}`, {
+          credentials: 'include',
+          cache:       'no-store',
+        })
+        if (res.ok) {
+          const { project, todayJob } = await res.json()
+          if (project) setProjectName(project.name)
+          if (todayJob) setJobId(todayJob.id)
+        }
 
-      // プロジェクト名取得
-      const { data: project } = await supabase
-        .from('projects')
-        .select('name')
-        .eq('id', projectId)
-        .single()
-      if (project) setProjectName(project.name)
-
-      // 今日のJob取得（チャット保存に使用）
-      const job = await getTodayJob(projectId)
-      if (job) setJobId(job.id)
-
-      // 履歴ロード
-      const history = await loadChatHistory(projectId, 30)
-      setMessages(history)
-      setHistoryLoaded(true)
+        // 履歴ロード（chat.service は既にfetch経由）
+        const history = await loadChatHistory(projectId, 30)
+        setMessages(history)
+      } catch {
+        // エラー時もspinnerを解除する
+      } finally {
+        setHistoryLoaded(true)
+      }
     }
     init()
   }, [projectId])
