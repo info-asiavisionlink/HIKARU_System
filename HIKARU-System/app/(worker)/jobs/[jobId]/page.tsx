@@ -3,7 +3,7 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { useRouter, useParams } from 'next/navigation'
-import { getOrCreateTodayJob, completeJob } from '@/services/jobs.service'
+import { completeJob } from '@/services/jobs.service'
 import { WorkerHeader } from '@/components/layouts/WorkerHeader'
 import { WorkProgress, SpotStatusDot } from '@/components/worker/WorkProgress'
 import { cn } from '@hikaru/ui'
@@ -65,14 +65,26 @@ export default function JobDetailPage() {
 
   async function handleStartWork() {
     setStarting(true)
-    const job = await getOrCreateTodayJob(projectId)
-    if (!job) {
+    try {
+      // ブラウザSupabase auth.getUser() ハングを回避するサーバーAPI経由でJob作成/取得
+      const res = await fetch('/api/jobs/start', {
+        method:      'POST',
+        headers:     { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body:        JSON.stringify({ projectId }),
+      })
+      if (!res.ok) {
+        toast.error('作業開始に失敗しました')
+        return
+      }
+      const { job } = await res.json()
+      setActiveJob(job)
+      router.push(`/jobs/${projectId}/before`)
+    } catch {
       toast.error('作業開始に失敗しました')
+    } finally {
       setStarting(false)
-      return
     }
-    setActiveJob(job)
-    router.push(`/jobs/${projectId}/before`)
   }
 
   async function handleComplete() {
