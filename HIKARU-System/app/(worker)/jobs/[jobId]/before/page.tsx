@@ -2,9 +2,7 @@
 
 import * as React from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
-import { getOrCreateTodayJob } from '@/services/jobs.service'
-import { uploadPhoto, getJobPhotos, type PhotoRow } from '@/services/photos.service'
+import { uploadPhoto, type PhotoRow } from '@/services/photos.service'
 import { WorkerHeader } from '@/components/layouts/WorkerHeader'
 import { PhotoCapture } from '@/components/worker/PhotoCapture'
 import { WorkProgress } from '@/components/worker/WorkProgress'
@@ -22,24 +20,33 @@ export default function BeforePage() {
 
   React.useEffect(() => {
     async function load() {
-      const supabase = createClient()
+      try {
+        // ジョブを作成/取得（サーバーAPI・ブラウザSupabase auth.getUser()ハング回避）
+        const startRes = await fetch('/api/jobs/start', {
+          method:      'POST',
+          headers:     { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body:        JSON.stringify({ projectId }),
+        })
+        if (!startRes.ok) { router.push(`/jobs/${projectId}`); return }
+        const { job } = await startRes.json()
+        setJobId(job.id)
 
-      const job = await getOrCreateTodayJob(projectId)
-      if (!job) { router.push(`/jobs/${projectId}`); return }
-      setJobId(job.id)
-
-      // project_id ベースで撮影箇所を取得（migration 008 で追加）
-      const { data: spotsData } = await supabase
-        .from('photo_spots')
-        .select('*')
-        .eq('project_id', projectId)
-        .order('order_num', { ascending: true })
-      setSpots(spotsData ?? [])
-
-      const existing = await getJobPhotos(job.id)
-      setPhotos(existing.filter((p) => p.photo_type === 'before'))
-
-      setLoading(false)
+        // photo_spots + 既存写真を一括取得（サーバーAPI）
+        const jobRes = await fetch(`/api/jobs/${projectId}`, {
+          credentials: 'include',
+          cache:       'no-store',
+        })
+        if (jobRes.ok) {
+          const { photoSpots, photos } = await jobRes.json()
+          setSpots(photoSpots ?? [])
+          setPhotos((photos ?? []).filter((p: PhotoRow) => p.photo_type === 'before'))
+        }
+      } catch {
+        router.push(`/jobs/${projectId}`)
+      } finally {
+        setLoading(false)
+      }
     }
     load()
   }, [projectId, router])
