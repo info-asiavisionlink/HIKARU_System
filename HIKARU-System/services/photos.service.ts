@@ -36,20 +36,22 @@ export async function uploadPhotoViaSignedUrl(
       return null
     }
 
-    const { signedUrl, path } = await signedRes.json()
+    const { path, token } = await signedRes.json()
 
-    // Step 2: Signed URLへ直接ファイルをPUT（Supabaseクライアント不使用・auth.getSession()不使用）
-    const formData = new FormData()
-    formData.append('cacheControl', '3600')
-    formData.append('', file)
+    if (!token) {
+      console.error('[photos] signed-url response missing token')
+      return null
+    }
 
-    const uploadRes = await fetch(signedUrl, {
-      method: 'PUT',
-      body:   formData,
-    })
+    // Step 2: Supabase SDK uploadToSignedUrl（必要なStorageヘッダーをSDKが処理）
+    // auth.getUser() / auth.getSession() は呼ばない
+    const supabase = createClient()
+    const { error: uploadError } = await supabase.storage
+      .from(BUCKET)
+      .uploadToSignedUrl(path, token, file)
 
-    if (!uploadRes.ok) {
-      console.error('[photos] storage PUT error:', uploadRes.status)
+    if (uploadError) {
+      console.error('[photos] storage upload error:', uploadError.message)
       return null
     }
 

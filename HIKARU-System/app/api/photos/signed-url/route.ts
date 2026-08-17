@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'storage error' }, { status: 500 })
     }
 
-    return NextResponse.json({ signedUrl: data.signedUrl, path: data.path })
+    return NextResponse.json({ signedUrl: data.signedUrl, path: data.path, token: data.token })
   } catch (e) {
     console.error('[photos/signed-url] server error:', e)
     return NextResponse.json({ error: 'server error' }, { status: 500 })
