@@ -3,7 +3,7 @@
 import * as React from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { completeJob } from '@/services/jobs.service'
-import { uploadPhoto, type PhotoRow } from '@/services/photos.service'
+import { uploadPhotoViaSignedUrl, type PhotoRow } from '@/services/photos.service'
 import { WorkerHeader } from '@/components/layouts/WorkerHeader'
 import { PhotoCapture } from '@/components/worker/PhotoCapture'
 import { WorkProgress } from '@/components/worker/WorkProgress'
@@ -54,17 +54,22 @@ export default function AfterPage() {
     if (!jobId) return
     setUploading((prev) => ({ ...prev, [spotId]: true }))
 
-    const result = await uploadPhoto(jobId, spotId, 'after', file)
-    if (result) {
-      setAllPhotos((prev) => {
-        const filtered = prev.filter((p) => !(p.spot_id === spotId && p.photo_type === 'after'))
-        return [...filtered, result]
-      })
-      toast.success('保存しました')
-    } else {
+    try {
+      const result = await uploadPhotoViaSignedUrl(jobId, spotId, 'after', file)
+      if (result) {
+        setAllPhotos((prev) => {
+          const filtered = prev.filter((p) => !(p.spot_id === spotId && p.photo_type === 'after'))
+          return [...filtered, result]
+        })
+        toast.success('保存しました')
+      } else {
+        toast.error('保存に失敗しました')
+      }
+    } catch {
       toast.error('保存に失敗しました')
+    } finally {
+      setUploading((prev) => ({ ...prev, [spotId]: false }))
     }
-    setUploading((prev) => ({ ...prev, [spotId]: false }))
   }
 
   async function handleDelete(spotId: string) {
