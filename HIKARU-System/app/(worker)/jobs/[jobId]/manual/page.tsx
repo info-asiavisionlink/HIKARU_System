@@ -150,9 +150,9 @@ export default function ManualPage() {
       ) : (
         <>
           {/* AIチャットバナー */}
-          <Link href={`/jobs/${projectId}/chat`}>
+          <Link href={`/jobs/${projectId}/chat`} className="block mt-4">
             <div className={cn(
-              'mx-4 mt-4 flex items-center gap-3 rounded-[var(--radius-xl)]',
+              'mx-4 flex items-center gap-3 rounded-[var(--radius-xl)]',
               'bg-gradient-to-r from-[var(--color-primary)] to-[oklch(0.45_0.22_280)]',
               'px-4 py-3.5 shadow-[var(--shadow-md)]',
               'active:scale-[0.98] transition-transform'
