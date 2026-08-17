@@ -3,7 +3,6 @@
 import * as React from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase/client'
 import { WorkerHeader } from '@/components/layouts/WorkerHeader'
 import { cn } from '@hikaru/ui'
 import {
@@ -100,20 +99,25 @@ function ManualCard({ manual }: { manual: Manual }) {
 export default function ManualPage() {
   const { jobId: projectId } = useParams<{ jobId: string }>()
   const [manuals, setManuals]       = React.useState<Manual[]>([])
-  const [projectName, setProjectName] = React.useState('')
   const [loading, setLoading]       = React.useState(true)
   const [filter, setFilter]         = React.useState<ManualType | 'all'>('all')
 
   React.useEffect(() => {
     async function load() {
-      const supabase = createClient()
-      const { data: project } = await supabase.from('projects').select('name').eq('id', projectId).single()
-      if (project) setProjectName(project.name)
-
-      const { data } = await supabase
-        .from('manuals').select('*').eq('project_id', projectId).order('order_num', { ascending: true })
-      setManuals((data as Manual[]) ?? [])
-      setLoading(false)
+      try {
+        // ブラウザSupabase auth/session ハングを回避するサーバーAPI経由でmanuals取得
+        const res = await fetch(`/api/jobs/${projectId}/manuals`, {
+          credentials: 'include',
+          cache:       'no-store',
+        })
+        if (!res.ok) return
+        const { manuals } = await res.json()
+        setManuals(manuals ?? [])
+      } catch {
+        // エラー時もspinnerを解除する
+      } finally {
+        setLoading(false)
+      }
     }
     load()
   }, [projectId])
