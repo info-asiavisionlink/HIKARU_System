@@ -1,34 +1,34 @@
 import { NextRequest } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/server'
 import { evaluateBeforeAfter, checkPhotoQuality } from '@/modules/quality-ai'
 
 // ============================================================
 // POST /api/ai/quality
 // action: 'check' | 'evaluate' | 'evaluate-all'
+// 認証: hk_s_uid cookie（ミドルウェア検証済み）
 // ============================================================
 
 export async function POST(req: NextRequest) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-
-  if (!user) {
+  const uid = req.cookies.get('hk_s_uid')?.value
+  if (!uid) {
     return Response.json({ success: false, error: { code: 'UNAUTHORIZED', message: '認証が必要です' } }, { status: 401 })
   }
 
   const body = await req.json()
   const { action } = body
+  const admin = createAdminClient()
 
   switch (action) {
-    case 'check':   return handlePhotoCheck(body, user.id, supabase)
-    case 'evaluate': return handleEvaluate(body, user.id, supabase)
-    case 'evaluate-all': return handleEvaluateAll(body, user.id, supabase)
+    case 'check':        return handlePhotoCheck(body)
+    case 'evaluate':     return handleEvaluate(body, uid, admin)
+    case 'evaluate-all': return handleEvaluateAll(body, uid, admin)
     default:
       return Response.json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'actionが不正です' } }, { status: 400 })
   }
 }
 
 // ---- 写真品質チェック ----
-async function handlePhotoCheck(body: any, _userId: string, _supabase: any) {
+async function handlePhotoCheck(body: any) {
   const { photoUrl, locationName } = body
   if (!photoUrl || !locationName) {
     return Response.json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'パラメータ不足' } }, { status: 400 })
@@ -43,22 +43,28 @@ async function handlePhotoCheck(body: any, _userId: string, _supabase: any) {
 }
 
 // ---- 単一スポット評価 ----
-async function handleEvaluate(body: any, userId: string, supabase: any) {
+async function handleEvaluate(body: any, uid: string, admin: any) {
   const { jobId, spotId, beforeUrl, afterUrl, beforePhotoId, afterPhotoId } = body
 
   if (!jobId || !spotId || !beforeUrl || !afterUrl) {
     return Response.json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'パラメータ不足' } }, { status: 400 })
   }
 
+  // Job ownership確認（adminクライアントはRLSをバイパスするため明示確認）
+  const { data: job } = await admin.from('jobs').select('id').eq('id', jobId).eq('worker_id', uid).maybeSingle()
+  if (!job) {
+    return Response.json({ success: false, error: { code: 'FORBIDDEN', message: 'このジョブへのアクセス権がありません' } }, { status: 403 })
+  }
+
   // 撮影箇所名を取得
-  const { data: spot } = await supabase.from('photo_spots').select('name').eq('id', spotId).single()
+  const { data: spot } = await admin.from('photo_spots').select('name').eq('id', spotId).single()
   const locationName = spot?.name ?? '撮影箇所'
 
   try {
     const result = await evaluateBeforeAfter(beforeUrl, afterUrl, locationName)
 
     // DB保存（upsert）
-    const { error } = await supabase.from('ai_evaluations').upsert(
+    const { error } = await admin.from('ai_evaluations').upsert(
       {
         job_id:          jobId,
         spot_id:         spotId,
@@ -92,7 +98,7 @@ async function handleEvaluate(body: any, userId: string, supabase: any) {
 }
 
 // ---- 全スポット一括評価 ----
-async function handleEvaluateAll(body: any, userId: string, supabase: any) {
+async function handleEvaluateAll(body: any, uid: string, admin: any) {
   const { jobId } = body
 
   if (!jobId) {
@@ -100,20 +106,20 @@ async function handleEvaluateAll(body: any, userId: string, supabase: any) {
   }
 
   // jobのアクセス権確認
-  const { data: job } = await supabase.from('jobs').select('id, project_id').eq('id', jobId).eq('worker_id', userId).single()
+  const { data: job } = await admin.from('jobs').select('id, project_id').eq('id', jobId).eq('worker_id', uid).single()
   if (!job) {
     return Response.json({ success: false, error: { code: 'FORBIDDEN', message: 'このジョブへのアクセス権がありません' } }, { status: 403 })
   }
 
   // 撮影箇所一覧取得（project_id ベース）
-  const { data: spots } = await supabase
+  const { data: spots } = await admin
     .from('photo_spots')
     .select('id, name, is_required')
     .eq('project_id', job.project_id)
     .order('order_num', { ascending: true })
 
   // このジョブの写真を取得
-  const { data: photos } = await supabase
+  const { data: photos } = await admin
     .from('photos')
     .select('id, spot_id, photo_type, url')
     .eq('job_id', jobId)
@@ -137,7 +143,7 @@ async function handleEvaluateAll(body: any, userId: string, supabase: any) {
     try {
       const result = await evaluateBeforeAfter(pair.before.url, pair.after.url, spot.name)
 
-      await supabase.from('ai_evaluations').upsert(
+      await admin.from('ai_evaluations').upsert(
         {
           job_id:          jobId,
           spot_id:         spot.id,
@@ -191,13 +197,12 @@ async function handleEvaluateAll(body: any, userId: string, supabase: any) {
 
 // ============================================================
 // GET /api/ai/quality?jobId=xxx — 評価結果一覧取得
+// 認証: hk_s_uid cookie（ミドルウェア検証済み）
 // ============================================================
 
 export async function GET(req: NextRequest) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-
-  if (!user) {
+  const uid = req.cookies.get('hk_s_uid')?.value
+  if (!uid) {
     return Response.json({ success: false, error: { code: 'UNAUTHORIZED', message: '認証が必要です' } }, { status: 401 })
   }
 
@@ -206,7 +211,15 @@ export async function GET(req: NextRequest) {
     return Response.json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'jobIdが必要です' } }, { status: 400 })
   }
 
-  const { data, error } = await supabase
+  const admin = createAdminClient()
+
+  // Job ownership確認（adminクライアントはRLSをバイパスするため明示確認）
+  const { data: job } = await admin.from('jobs').select('id').eq('id', jobId).eq('worker_id', uid).maybeSingle()
+  if (!job) {
+    return Response.json({ success: false, error: { code: 'FORBIDDEN', message: 'このジョブへのアクセス権がありません' } }, { status: 403 })
+  }
+
+  const { data, error } = await admin
     .from('ai_evaluations')
     .select('*, photo_spots(name, is_required)')
     .eq('job_id', jobId)
