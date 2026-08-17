@@ -429,19 +429,24 @@ export default function ReportPage() {
   async function handleGenerate() {
     if (!jobId) return
     setGenerating(true)
-    const result = await generateReport(jobId)
-    if (result.success && result.content) {
-      setContent(result.content)
-      setReportId(result.reportId)
-      setReportDate(new Date().toISOString())
-      setReportVersion(result.content.summary ? (history.length + 1) : 1)
-      const hist = await loadReportHistory(jobId)
-      setHistory(hist)
-      toast.success('報告書を生成しました')
-    } else {
-      toast.error(`生成に失敗しました: ${result.error}`)
+    try {
+      const result = await generateReport(jobId)
+      if (result.success && result.content) {
+        setContent(result.content)
+        setReportId(result.reportId)
+        setReportDate(new Date().toISOString())
+        setReportVersion(result.content.summary ? (history.length + 1) : 1)
+        const hist = await loadReportHistory(jobId)
+        setHistory(hist)
+        toast.success('報告書を生成しました')
+      } else {
+        toast.error(`生成に失敗しました: ${result.error}`)
+      }
+    } catch {
+      toast.error('生成に失敗しました')
+    } finally {
+      setGenerating(false)
     }
-    setGenerating(false)
   }
 
   async function handleSelectHistory(id: string) {

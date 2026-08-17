@@ -251,17 +251,21 @@ export default function EvaluationPage() {
     if (!targetJobId) return
     setEvaluating(true)
 
-    const result = await evaluateAllSpots(targetJobId)
-    if (result.success) {
-      setSummary(result.summary)
-      const updated = await loadEvaluations(targetJobId)
-      setEvaluations(updated)
-      toast.success('AI品質評価が完了しました')
-    } else {
-      toast.error(`評価に失敗しました: ${result.error}`)
+    try {
+      const result = await evaluateAllSpots(targetJobId)
+      if (result.success) {
+        setSummary(result.summary)
+        const updated = await loadEvaluations(targetJobId)
+        setEvaluations(updated)
+        toast.success('AI品質評価が完了しました')
+      } else {
+        toast.error(`評価に失敗しました: ${result.error}`)
+      }
+    } catch {
+      toast.error('評価に失敗しました')
+    } finally {
+      setEvaluating(false)
     }
-
-    setEvaluating(false)
   }
 
   async function handleComplete() {
