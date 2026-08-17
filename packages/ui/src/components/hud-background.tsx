@@ -6,12 +6,14 @@ interface HudBackgroundProps {
   className?: string
   particleCount?: number
   showGrid?: boolean
+  zIndex?: number
 }
 
 export function HudBackground({
   className = '',
   particleCount = 40,
   showGrid = true,
+  zIndex = 1,
 }: HudBackgroundProps) {
   const canvasRef = React.useRef<HTMLCanvasElement>(null)
   const animationRef = React.useRef<number>(0)
@@ -163,7 +165,7 @@ export function HudBackground({
     <canvas
       ref={canvasRef}
       className={`fixed inset-0 pointer-events-none ${className}`}
-      style={{ zIndex: -1 }}
+      style={{ zIndex }}
       aria-hidden="true"
     />
   )

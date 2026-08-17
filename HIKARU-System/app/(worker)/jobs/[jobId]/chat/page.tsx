@@ -2,10 +2,12 @@
 
 import * as React from 'react'
 import { useParams } from 'next/navigation'
+import { createClient } from '@/lib/supabase/client'
 import {
   loadChatHistory, sendChatMessage, parseAIResponse,
   type ChatMessageRow, type ResponseSection,
 } from '@/services/chat.service'
+import { getTodayJob } from '@/services/jobs.service'
 import { WorkerHeader } from '@/components/layouts/WorkerHeader'
 import { WELCOME_MESSAGE } from '@/modules/manual-ai/prompts'
 import { cn } from '@hikaru/ui'
@@ -168,24 +170,24 @@ export default function ChatPage() {
   // 初期化
   React.useEffect(() => {
     async function init() {
-      try {
-        // 既存の /api/jobs/[jobId] でプロジェクト名・todayJob.id を一括取得
-        // ブラウザSupabase auth.getUser() ハングを回避
-        const [jobRes, history] = await Promise.all([
-          fetch(`/api/jobs/${projectId}`, { credentials: 'include', cache: 'no-store' }),
-          loadChatHistory(projectId, 30),
-        ])
-        if (jobRes.ok) {
-          const data = await jobRes.json()
-          if (data.project?.name) setProjectName(data.project.name)
-          if (data.todayJob?.id) setJobId(data.todayJob.id)
-        }
-        setMessages(history)
-      } catch {
-        // エラー時は履歴なしで続行（チャット入力自体は可能）
-      } finally {
-        setHistoryLoaded(true)
-      }
+      const supabase = createClient()
+
+      // プロジェクト名取得
+      const { data: project } = await supabase
+        .from('projects')
+        .select('name')
+        .eq('id', projectId)
+        .single()
+      if (project) setProjectName(project.name)
+
+      // 今日のJob取得（チャット保存に使用）
+      const job = await getTodayJob(projectId)
+      if (job) setJobId(job.id)
+
+      // 履歴ロード
+      const history = await loadChatHistory(projectId, 30)
+      setMessages(history)
+      setHistoryLoaded(true)
     }
     init()
   }, [projectId])

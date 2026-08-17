@@ -2,11 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
 // GET /api/expenses/[id]
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const uid = req.cookies.get('hk_s_uid')?.value
-  if (!uid) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-
   const supabase = await createClient()
 
   const { data, error } = await supabase
@@ -19,10 +16,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       expense_receipts (id, file_name, mime_type, storage_path, file_size, created_at)
     `)
     .eq('id', id)
-    .eq('worker_id', uid)
     .single()
 
-  if (error || !data) return NextResponse.json({ error: '経費が見つかりません' }, { status: 404 })
+  if (error) return NextResponse.json({ error: error.message }, { status: 404 })
   return NextResponse.json({ expense: data })
 }
 
@@ -52,23 +48,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 }
 
 // DELETE /api/expenses/[id] - draft のみ削除可
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const uid = req.cookies.get('hk_s_uid')?.value
-  if (!uid) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-
   const supabase = await createClient()
-
-  const { data: existing } = await supabase
-    .from('expenses')
-    .select('worker_id, status')
-    .eq('id', id)
-    .single()
-
-  if (!existing) return NextResponse.json({ error: '経費が見つかりません' }, { status: 404 })
-  if (existing.worker_id !== uid) return NextResponse.json({ error: '権限がありません' }, { status: 403 })
-  if (existing.status !== 'draft') return NextResponse.json({ error: '下書き状態の経費のみ削除できます' }, { status: 400 })
-
   const { error } = await supabase.from('expenses').delete().eq('id', id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })

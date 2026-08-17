@@ -13,3 +13,5 @@ out/
 # OS
 .DS_Store
 *.log
+.vercel
+.env*

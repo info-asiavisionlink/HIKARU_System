@@ -123,7 +123,7 @@ export function PhotoCapture({
           disabled={isLoading}
           className={cn(
             'flex flex-col items-center justify-center gap-3',
-            'w-full aspect-[4/3] rounded-[var(--radius-xl)]',
+            'w-full aspect-video rounded-[var(--radius-xl)]',
             'border-2 border-dashed',
             'transition-all duration-150',
             'active:scale-[0.98]',

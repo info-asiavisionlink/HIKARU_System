@@ -85,42 +85,11 @@ export async function getWorkerProject(projectId: string, workerId?: string): Pr
   const wid = await resolveWorkerId(workerId)
   if (!wid) return null
 
-  // profiles から entity_type / entity_id / company_id を取得
-  const { data: profileData } = await supabase
-    .from('profiles')
-    .select('entity_type, entity_id, company_id')
-    .eq('id', wid)
-    .single()
-
-  const profile = profileData as { entity_type: string | null; entity_id: string | null; company_id: string | null } | null
-
-  const entityType = profile?.entity_type
-  const entityId   = profile?.entity_id
-  const companyId  = profile?.company_id
-
-  // entity 情報がない場合はアクセス拒否
-  if (!entityType || !entityId) return null
-
-  // project_assignments で担当確認（担当外は null を返す = 画面で404扱い）
-  const { data: assignment } = await supabase
-    .from('project_assignments')
-    .select('project_id')
-    .eq('assignee_type', entityType)
-    .eq('assignee_id', entityId)
-    .eq('project_id', projectId)
-    .maybeSingle()
-
-  if (!assignment) return null
-
-  // 担当確認済み。案件データを取得（company_id フィルタを追加防御として付与）
-  let projectQuery = supabase
+  const { data: project, error } = await supabase
     .from('projects')
     .select('*')
     .eq('id', projectId)
-
-  if (companyId) projectQuery = projectQuery.eq('company_id', companyId)
-
-  const { data: project, error } = await projectQuery.single()
+    .single()
 
   if (error) console.error('[getWorkerProject] error:', error.message)
   if (!project) return null

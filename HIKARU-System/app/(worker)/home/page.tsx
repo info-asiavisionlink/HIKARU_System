@@ -97,11 +97,42 @@ function InProgressCard({ job }: { job: any }) {
   )
 }
 
+function TodayShiftCard({ shift }: { shift: any }) {
+  const GOLD = 'oklch(0.73 0.12 78)'
+  const statusColor = shift.status === 'confirmed' ? 'oklch(0.85 0.18 198)' : GOLD
+  return (
+    <div className="rounded-[var(--radius-xl)] p-4"
+      style={{
+        background: 'oklch(0.09 0.005 255 / 0.82)',
+        border: `1px solid ${statusColor}30`,
+      }}>
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[10px] font-bold tabular-nums" style={{ color: statusColor }}>
+          {shift.start_time?.slice(0,5)} 〜 {shift.end_time?.slice(0,5)}
+        </span>
+        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded"
+          style={{ background: `${statusColor}18`, color: statusColor }}>
+          {shift.status === 'confirmed' ? '確定' : '予定'}
+        </span>
+      </div>
+      <p className="font-bold text-sm truncate" style={{ color: 'oklch(0.92 0.008 75)' }}>
+        {shift.projects?.name ?? '—'}
+      </p>
+      {shift.projects?.location_name && (
+        <p className="text-xs mt-0.5 truncate" style={{ color: 'oklch(0.55 0.007 75)' }}>
+          {shift.projects.location_name}
+        </p>
+      )}
+    </div>
+  )
+}
+
 export default function HomePage() {
   const router = useRouter()
   const [profile, setProfile] = React.useState<any>(null)
   const [summary, setSummary] = React.useState({ inProgress: 0, completed: 0, total: 0, jobs: [] as any[] })
   const [recentProjects, setRecentProjects] = React.useState<any[]>([])
+  const [todayShifts, setTodayShifts] = React.useState<any[]>([])
   const [loading, setLoading] = React.useState(true)
   const [loadError, setLoadError] = React.useState<string | null>(null)
   const [reloadKey, setReloadKey] = React.useState(0)
@@ -121,6 +152,12 @@ export default function HomePage() {
         setProfile(data.profile)
         setSummary(data.summary)
         setRecentProjects(data.projects)
+
+        // 今日のシフト取得
+        const today = new Date().toISOString().split('T')[0]
+        fetch(`/api/shifts?date_from=${today}&date_to=${today}`, { credentials: 'include' })
+          .then(r => r.ok ? r.json() : { shifts: [] })
+          .then(d => setTodayShifts(d.shifts ?? []))
       } catch (e) {
         console.error('[home] load error:', e)
         setLoadError(e instanceof Error ? e.message : '読み込みに失敗しました')
@@ -202,6 +239,19 @@ export default function HomePage() {
 
       <div className="px-4 py-5 space-y-6">
         {inProgressJob && <InProgressCard job={inProgressJob} />}
+
+        {/* 今日のシフト */}
+        {todayShifts.length > 0 && (
+          <section>
+            <p className="mb-3 text-[9px] font-bold uppercase tracking-[0.25em]"
+              style={{ color: 'oklch(0.73 0.12 78 / 0.50)' }}>
+              今日の予定シフト
+            </p>
+            <div className="space-y-2">
+              {todayShifts.map(s => <TodayShiftCard key={s.id} shift={s} />)}
+            </div>
+          </section>
+        )}
 
         {/* 本日の作業 */}
         <section>

@@ -13,9 +13,6 @@ export interface ReportListItem {
   created_at: string
 }
 
-// Frontend timeout: must be longer than server maxDuration (90s) to allow JSON response delivery
-const REPORT_GENERATE_TIMEOUT_MS = 100_000
-
 // 報告書生成（API経由）
 export async function generateReport(jobId: string): Promise<{
   success: boolean
@@ -23,36 +20,15 @@ export async function generateReport(jobId: string): Promise<{
   content?: ReportContent
   error?: string
 }> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), REPORT_GENERATE_TIMEOUT_MS)
+  const res = await fetch('/api/ai/report', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ jobId }),
+  })
 
-  try {
-    const res = await fetch('/api/ai/report', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ jobId }),
-      signal:  controller.signal,
-    })
-
-    let json: { success: boolean; data?: { reportId?: string; content?: ReportContent }; error?: { message?: string } }
-    try {
-      json = await res.json()
-    } catch {
-      return { success: false, error: 'サーバーから無効なレスポンスを受信しました' }
-    }
-
-    if (!res.ok || !json.success) {
-      return { success: false, error: json.error?.message ?? `サーバーエラー (${res.status})` }
-    }
-    return { success: true, reportId: json.data?.reportId, content: json.data?.content }
-  } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') {
-      return { success: false, error: '報告書生成に時間がかかっています。再度お試しください。' }
-    }
-    return { success: false, error: 'ネットワークエラーが発生しました。接続を確認してください。' }
-  } finally {
-    clearTimeout(timer)
-  }
+  const json = await res.json()
+  if (!json.success) return { success: false, error: json.error?.message }
+  return { success: true, reportId: json.data.reportId, content: json.data.content }
 }
 
 // 報告書履歴取得

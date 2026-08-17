@@ -2,7 +2,9 @@
 
 import * as React from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { uploadPhotoViaSignedUrl, type PhotoRow } from '@/services/photos.service'
+import { createClient } from '@/lib/supabase/client'
+import { getOrCreateTodayJob } from '@/services/jobs.service'
+import { uploadPhoto, getJobPhotos, type PhotoRow } from '@/services/photos.service'
 import { WorkerHeader } from '@/components/layouts/WorkerHeader'
 import { PhotoCapture } from '@/components/worker/PhotoCapture'
 import { WorkProgress } from '@/components/worker/WorkProgress'
@@ -20,33 +22,24 @@ export default function BeforePage() {
 
   React.useEffect(() => {
     async function load() {
-      try {
-        // ジョブを作成/取得（サーバーAPI・ブラウザSupabase auth.getUser()ハング回避）
-        const startRes = await fetch('/api/jobs/start', {
-          method:      'POST',
-          headers:     { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body:        JSON.stringify({ projectId }),
-        })
-        if (!startRes.ok) { router.push(`/jobs/${projectId}`); return }
-        const { job } = await startRes.json()
-        setJobId(job.id)
+      const supabase = createClient()
 
-        // photo_spots + 既存写真を一括取得（サーバーAPI）
-        const jobRes = await fetch(`/api/jobs/${projectId}`, {
-          credentials: 'include',
-          cache:       'no-store',
-        })
-        if (jobRes.ok) {
-          const { photoSpots, photos } = await jobRes.json()
-          setSpots(photoSpots ?? [])
-          setPhotos((photos ?? []).filter((p: PhotoRow) => p.photo_type === 'before'))
-        }
-      } catch {
-        router.push(`/jobs/${projectId}`)
-      } finally {
-        setLoading(false)
-      }
+      const job = await getOrCreateTodayJob(projectId)
+      if (!job) { router.push(`/jobs/${projectId}`); return }
+      setJobId(job.id)
+
+      // project_id ベースで撮影箇所を取得（migration 008 で追加）
+      const { data: spotsData } = await supabase
+        .from('photo_spots')
+        .select('*')
+        .eq('project_id', projectId)
+        .order('order_num', { ascending: true })
+      setSpots(spotsData ?? [])
+
+      const existing = await getJobPhotos(job.id)
+      setPhotos(existing.filter((p) => p.photo_type === 'before'))
+
+      setLoading(false)
     }
     load()
   }, [projectId, router])
@@ -58,22 +51,19 @@ export default function BeforePage() {
   async function handleCapture(spotId: string, file: File) {
     if (!jobId) return
     setUploading((prev) => ({ ...prev, [spotId]: true }))
-    try {
-      const result = await uploadPhotoViaSignedUrl(jobId, spotId, 'before', file)
-      if (result) {
-        setPhotos((prev) => {
-          const filtered = prev.filter((p) => p.spot_id !== spotId)
-          return [...filtered, result]
-        })
-        toast.success('保存しました')
-      } else {
-        toast.error('保存に失敗しました')
-      }
-    } catch {
+
+    const result = await uploadPhoto(jobId, spotId, 'before', file)
+    if (result) {
+      setPhotos((prev) => {
+        const filtered = prev.filter((p) => p.spot_id !== spotId)
+        return [...filtered, result]
+      })
+      toast.success('保存しました')
+    } else {
       toast.error('保存に失敗しました')
-    } finally {
-      setUploading((prev) => ({ ...prev, [spotId]: false }))
     }
+
+    setUploading((prev) => ({ ...prev, [spotId]: false }))
   }
 
   async function handleDelete(spotId: string) {
@@ -115,7 +105,7 @@ export default function BeforePage() {
       </div>
 
       {/* 撮影箇所リスト */}
-      <div className="px-4 py-4 space-y-6 pb-32">
+      <div className="px-4 py-3 space-y-4 pb-32">
         {spots.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <p className="text-sm text-[var(--color-muted-foreground)]">

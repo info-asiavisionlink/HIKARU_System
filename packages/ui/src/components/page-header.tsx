@@ -7,9 +7,10 @@ interface PageHeaderProps {
   actions?: React.ReactNode
   breadcrumb?: React.ReactNode
   className?: string
+  brand?: string
 }
 
-function PageHeader({ title, description, actions, breadcrumb, className }: PageHeaderProps) {
+function PageHeader({ title, description, actions, breadcrumb, className, brand = 'HIKARU CONSOLE' }: PageHeaderProps) {
   return (
     <div className={cn('flex flex-col gap-3 mb-7', className)}>
       {breadcrumb}
@@ -25,7 +26,7 @@ function PageHeader({ title, description, actions, breadcrumb, className }: Page
             </div>
             <span className="text-[9px] font-bold tracking-[0.3em] uppercase"
               style={{ color: 'oklch(0.73 0.12 78 / 0.7)' }}>
-              HIKARU CONSOLE
+              {brand}
             </span>
           </div>
           <h1 className="text-2xl font-bold leading-tight tracking-tight"

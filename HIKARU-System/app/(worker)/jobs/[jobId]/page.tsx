@@ -3,6 +3,7 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { useRouter, useParams } from 'next/navigation'
+import { getOrCreateTodayJob, completeJob } from '@/services/jobs.service'
 import { WorkerHeader } from '@/components/layouts/WorkerHeader'
 import { WorkProgress, SpotStatusDot } from '@/components/worker/WorkProgress'
 import { cn } from '@hikaru/ui'
@@ -34,33 +35,27 @@ export default function JobDetailPage() {
   const [activeJob, setActiveJob] = React.useState<any>(null)
   const [photos, setPhotos] = React.useState<any[]>([])
   const [loading, setLoading] = React.useState(true)
-  const [loadError, setLoadError] = React.useState<string | null>(null)
   const [starting, setStarting] = React.useState(false)
   const [completing, setCompleting] = React.useState(false)
+  const [generatingReport, setGeneratingReport] = React.useState(false)
 
   React.useEffect(() => {
     async function load() {
       try {
-        // ブラウザSupabaseクライアントを使わずサーバーAPIで一括取得
-        // （refreshingDeferred ハングによる無限スピナーを回避）
-        const res = await fetch(`/api/jobs/${projectId}`, {
+        const res = await fetch(`/api/projects/${projectId}`, {
           credentials: 'include',
           cache: 'no-store',
         })
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}))
-          setLoadError((body as { error?: string }).error ?? '案件を取得できませんでした')
-          return
-        }
-        const { project, photoSpots, todayJob, photos } = await res.json()
-        setProject(project ?? null)
-        setPhotoSpots(photoSpots ?? [])
+        if (!res.ok) return
+        const { project, spots, todayJob, photos: ph } = await res.json()
+        setProject(project)
+        setPhotoSpots(spots ?? [])
         if (todayJob) {
           setActiveJob(todayJob)
-          setPhotos(photos ?? [])
+          setPhotos(ph ?? [])
         }
-      } catch {
-        setLoadError('通信エラーが発生しました')
+      } catch (err) {
+        console.error('[JobDetailPage] load error:', err)
       } finally {
         setLoading(false)
       }
@@ -70,25 +65,14 @@ export default function JobDetailPage() {
 
   async function handleStartWork() {
     setStarting(true)
-    try {
-      const res = await fetch('/api/jobs/start', {
-        method:      'POST',
-        headers:     { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body:        JSON.stringify({ projectId }),
-      })
-      if (!res.ok) {
-        toast.error('作業開始に失敗しました')
-        return
-      }
-      const { job } = await res.json()
-      setActiveJob(job)
-      router.push(`/jobs/${projectId}/before`)
-    } catch {
+    const job = await getOrCreateTodayJob(projectId)
+    if (!job) {
       toast.error('作業開始に失敗しました')
-    } finally {
       setStarting(false)
+      return
     }
+    setActiveJob(job)
+    router.push(`/jobs/${projectId}/before`)
   }
 
   async function handleComplete() {
@@ -107,24 +91,38 @@ export default function JobDetailPage() {
     }
 
     setCompleting(true)
+    const ok = await completeJob(activeJob.id)
+    if (!ok) {
+      toast.error('完了処理に失敗しました')
+      setCompleting(false)
+      return
+    }
+
+    const completedAt = new Date().toISOString()
+    setActiveJob((prev: any) => ({ ...prev, status: 'completed', completed_at: completedAt }))
+    setCompleting(false)
+
+    // 報告書を自動生成
+    setGeneratingReport(true)
+    toast.success('作業完了！報告書を自動生成しています...')
     try {
-      const res = await fetch('/api/jobs/complete', {
-        method:      'POST',
-        credentials: 'include',
-        headers:     { 'Content-Type': 'application/json' },
-        body:        JSON.stringify({ jobId: activeJob.id }),
+      const res = await fetch('/api/ai/report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId: activeJob.id }),
       })
-      if (res.ok) {
-        setActiveJob((prev: any) => ({ ...prev, status: 'completed', completed_at: new Date().toISOString() }))
-        toast.success('作業完了しました！お疲れ様でした！')
+      const json = await res.json()
+      if (json.success) {
+        toast.success('報告書を生成しました！お疲れ様でした！')
+        router.push(`/jobs/${projectId}/evaluation`)
       } else {
-        const json = await res.json().catch(() => ({}))
-        toast.error((json as { error?: string }).error ?? '完了処理に失敗しました')
+        toast.error('報告書の自動生成に失敗しました。評価ページから手動で生成できます。')
+        router.push(`/jobs/${projectId}/evaluation`)
       }
     } catch {
-      toast.error('通信エラーが発生しました')
+      toast.error('ネットワークエラーが発生しました')
     } finally {
-      setCompleting(false)
+      setGeneratingReport(false)
     }
   }
 
@@ -154,9 +152,7 @@ export default function JobDetailPage() {
       <div className="min-h-dvh bg-[var(--color-background)]">
         <WorkerHeader title="案件詳細" showBack />
         <div className="flex flex-col items-center justify-center py-16">
-          <p className="text-[var(--color-muted-foreground)]">
-            {loadError ?? '案件が見つかりませんでした'}
-          </p>
+          <p className="text-[var(--color-muted-foreground)]">案件が見つかりませんでした</p>
           <button onClick={() => router.back()} className="mt-4 text-sm text-[var(--color-primary)]">
             戻る
           </button>
@@ -180,7 +176,7 @@ export default function JobDetailPage() {
         }
       />
 
-      <div className="pb-32 space-y-0">
+      <div className={cn("space-y-0", activeJob && "pb-44")}>
         {/* 完了バナー */}
         {isJobCompleted && (
           <div className="bg-[var(--color-success)] px-4 py-3 flex items-center gap-2">
@@ -228,7 +224,7 @@ export default function JobDetailPage() {
 
         {/* 作業開始時刻 */}
         {activeJob && (
-          <div className="bg-[var(--color-surface)] border-b border-[var(--color-border)] px-4 py-3">
+          <div className="bg-[var(--color-surface)] border-b border-[var(--color-border)] px-4 py-4">
             <div className="flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
               <Clock className="h-4 w-4" />
               <span>
@@ -276,7 +272,7 @@ export default function JobDetailPage() {
         )}
 
         {/* マニュアル & AIチャット & 品質評価 & 報告書ボタン */}
-        <div className="px-4 py-4 bg-[var(--color-surface)] border-b border-[var(--color-border)] grid grid-cols-2 gap-2">
+        <div className="px-4 py-4 bg-[var(--color-surface)] border-b border-[var(--color-border)] grid grid-cols-2 gap-3">
           <Link
             href={`/jobs/${projectId}/manual`}
             className="flex flex-col items-center gap-1.5 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-muted)] px-2 py-3 active:bg-[var(--color-border)] transition-colors"
@@ -320,48 +316,58 @@ export default function JobDetailPage() {
         </div>
       </div>
 
-      {/* 固定フッターボタン */}
-      <div className="fixed bottom-[var(--bottom-nav-height)] left-0 right-0 px-4 pb-4 pt-3 bg-[var(--color-surface)]/95 backdrop-blur-md border-t border-[var(--color-border)]">
-        {isJobCompleted ? (
-          <div className="flex gap-2">
-            <Link
-              href={`/jobs/${projectId}/report`}
-              className="flex-1 flex items-center justify-center gap-2 rounded-[var(--radius-xl)] bg-[var(--color-primary)] py-4 text-base font-semibold text-white active:bg-[var(--color-primary-hover)] transition-colors"
-            >
-              <FileText className="h-5 w-5" /> 報告書
-            </Link>
-            <button
-              onClick={() => router.push('/jobs')}
-              className="flex-1 rounded-[var(--radius-xl)] bg-[var(--color-muted)] py-4 text-base font-semibold text-[var(--color-muted-foreground)]"
-            >
-              一覧に戻る
-            </button>
-          </div>
-        ) : activeJob ? (
-          <div className="flex gap-2">
-            <Link
-              href={`/jobs/${projectId}/${beforeCount < totalSpots ? 'before' : 'after'}`}
-              className={cn(
-                'flex-1 flex items-center justify-center gap-2 rounded-[var(--radius-xl)] py-4',
-                'text-base font-semibold text-white',
-                'bg-[var(--color-primary)] active:bg-[var(--color-primary-active)]',
-                'transition-colors'
-              )}
-            >
-              <Camera className="h-5 w-5" />
-              {beforeCount < totalSpots ? 'Before撮影' : 'After撮影'}
-            </Link>
-            {afterCount === totalSpots && totalSpots > 0 && (
-              <button
-                onClick={handleComplete}
-                disabled={completing}
-                className="flex-1 rounded-[var(--radius-xl)] bg-[var(--color-success)] py-4 text-base font-semibold text-white active:bg-[var(--color-success-hover)] transition-colors disabled:opacity-50"
+      {/* 固定フッター: 作業中・完了時のみ */}
+      {activeJob && (
+        <div className="fixed bottom-[var(--bottom-nav-height)] left-0 right-0 px-4 pb-4 pt-3 bg-[var(--color-surface)]/95 backdrop-blur-md border-t border-[var(--color-border)]">
+          {isJobCompleted ? (
+            <div className="flex gap-2">
+              <Link
+                href={`/jobs/${projectId}/report`}
+                className="flex-1 flex items-center justify-center gap-2 rounded-[var(--radius-xl)] bg-[var(--color-primary)] py-4 text-base font-semibold text-white active:bg-[var(--color-primary-hover)] transition-colors"
               >
-                {completing ? '処理中...' : '作業完了'}
+                <FileText className="h-5 w-5" /> 報告書
+              </Link>
+              <button
+                onClick={() => router.push('/jobs')}
+                className="flex-1 rounded-[var(--radius-xl)] bg-[var(--color-muted)] py-4 text-base font-semibold text-[var(--color-muted-foreground)]"
+              >
+                一覧に戻る
               </button>
-            )}
-          </div>
-        ) : (
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <Link
+                href={`/jobs/${projectId}/${beforeCount < totalSpots ? 'before' : 'after'}`}
+                className={cn(
+                  'flex-1 flex items-center justify-center gap-2 rounded-[var(--radius-xl)] py-4',
+                  'text-base font-semibold text-white',
+                  'bg-[var(--color-primary)] active:bg-[var(--color-primary-active)]',
+                  'transition-colors'
+                )}
+              >
+                <Camera className="h-5 w-5" />
+                {beforeCount < totalSpots ? 'Before撮影' : 'After撮影'}
+              </Link>
+              {afterCount === totalSpots && totalSpots > 0 && (
+                <button
+                  onClick={handleComplete}
+                  disabled={completing || generatingReport}
+                  className="flex-1 rounded-[var(--radius-xl)] bg-[var(--color-success)] py-4 text-base font-semibold text-white active:bg-[var(--color-success-hover)] transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {(completing || generatingReport) && (
+                    <div className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                  )}
+                  {completing ? '完了処理中...' : generatingReport ? '報告書生成中...' : '作業完了'}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 作業未開始: コンテンツ末尾のインラインCTA */}
+      {!activeJob && (
+        <div className="px-4 pt-2 pb-10">
           <button
             onClick={handleStartWork}
             disabled={starting}
@@ -381,8 +387,8 @@ export default function JobDetailPage() {
             )}
             {starting ? '準備中...' : '作業を開始する'}
           </button>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   )
 }

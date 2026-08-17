@@ -2,7 +2,9 @@
 
 import * as React from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { uploadPhotoViaSignedUrl, type PhotoRow } from '@/services/photos.service'
+import { createClient } from '@/lib/supabase/client'
+import { getTodayJob, completeJob } from '@/services/jobs.service'
+import { uploadPhoto, getJobPhotos, type PhotoRow } from '@/services/photos.service'
 import { WorkerHeader } from '@/components/layouts/WorkerHeader'
 import { PhotoCapture } from '@/components/worker/PhotoCapture'
 import { WorkProgress } from '@/components/worker/WorkProgress'
@@ -21,26 +23,25 @@ export default function AfterPage() {
 
   React.useEffect(() => {
     async function load() {
-      try {
-        // todayJob + photo_spots + 既存写真を一括取得（サーバーAPI・ブラウザSupabase auth.getUser()ハング回避）
-        const res = await fetch(`/api/jobs/${projectId}`, {
-          credentials: 'include',
-          cache:       'no-store',
-        })
-        if (!res.ok) { router.push(`/jobs/${projectId}`); return }
-        const { photoSpots, todayJob, photos } = await res.json()
+      const supabase = createClient()
 
-        if (!todayJob) { router.push(`/jobs/${projectId}`); return }
-        if (todayJob.status === 'completed') { router.push(`/jobs/${projectId}`); return }
+      const job = await getTodayJob(projectId)
+      if (!job) { router.push(`/jobs/${projectId}`); return }
+      if (job.status === 'completed') { router.push(`/jobs/${projectId}`); return }
+      setJobId(job.id)
 
-        setJobId(todayJob.id)
-        setSpots(photoSpots ?? [])
-        setAllPhotos(photos ?? [])
-      } catch {
-        router.push(`/jobs/${projectId}`)
-      } finally {
-        setLoading(false)
-      }
+      // project_id ベースで撮影箇所を取得（migration 008 で追加）
+      const { data: spotsData } = await supabase
+        .from('photo_spots')
+        .select('*')
+        .eq('project_id', projectId)
+        .order('order_num', { ascending: true })
+      setSpots(spotsData ?? [])
+
+      const existing = await getJobPhotos(job.id)
+      setAllPhotos(existing)
+
+      setLoading(false)
     }
     load()
   }, [projectId, router])
@@ -52,22 +53,18 @@ export default function AfterPage() {
   async function handleCapture(spotId: string, file: File) {
     if (!jobId) return
     setUploading((prev) => ({ ...prev, [spotId]: true }))
-    try {
-      const result = await uploadPhotoViaSignedUrl(jobId, spotId, 'after', file)
-      if (result) {
-        setAllPhotos((prev) => {
-          const filtered = prev.filter((p) => !(p.spot_id === spotId && p.photo_type === 'after'))
-          return [...filtered, result]
-        })
-        toast.success('保存しました')
-      } else {
-        toast.error('保存に失敗しました')
-      }
-    } catch {
+
+    const result = await uploadPhoto(jobId, spotId, 'after', file)
+    if (result) {
+      setAllPhotos((prev) => {
+        const filtered = prev.filter((p) => !(p.spot_id === spotId && p.photo_type === 'after'))
+        return [...filtered, result]
+      })
+      toast.success('保存しました')
+    } else {
       toast.error('保存に失敗しました')
-    } finally {
-      setUploading((prev) => ({ ...prev, [spotId]: false }))
     }
+    setUploading((prev) => ({ ...prev, [spotId]: false }))
   }
 
   async function handleDelete(spotId: string) {
@@ -83,25 +80,14 @@ export default function AfterPage() {
       return
     }
     setCompleting(true)
-    try {
-      const res = await fetch('/api/jobs/complete', {
-        method:      'POST',
-        credentials: 'include',
-        headers:     { 'Content-Type': 'application/json' },
-        body:        JSON.stringify({ jobId }),
-      })
-      if (res.ok) {
-        toast.success('作業完了しました！お疲れ様でした！')
-        router.replace(`/jobs/${projectId}`)
-      } else {
-        const json = await res.json().catch(() => ({}))
-        toast.error((json as { error?: string }).error ?? '完了処理に失敗しました')
-      }
-    } catch {
-      toast.error('通信エラーが発生しました')
-    } finally {
-      setCompleting(false)
+    const ok = await completeJob(jobId)
+    if (ok) {
+      toast.success('作業完了しました！お疲れ様でした！')
+      router.replace(`/jobs/${projectId}`)
+    } else {
+      toast.error('完了処理に失敗しました')
     }
+    setCompleting(false)
   }
 
   const afterCount = spots.filter((s) => !!getSpotPhoto(s.id, 'after')).length

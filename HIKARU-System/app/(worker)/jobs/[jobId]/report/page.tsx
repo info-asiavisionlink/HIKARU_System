@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import { useParams, useRouter } from 'next/navigation'
+import { getTodayJob } from '@/services/jobs.service'
 import {
   generateReport, loadReportHistory, loadReport,
   getScoreColor, getScoreLabel,
@@ -86,9 +87,9 @@ function ReportDocument({ content, reportVersion, reportDate }: {
   const { project, store, client, job, spots, summary } = content
 
   return (
-    <div className="report-page bg-white max-w-[800px] mx-auto shadow-[var(--shadow-xl)] print:shadow-none" style={{ color: '#111' }}>
+    <div className="report-page bg-white max-w-[800px] mx-auto shadow-[var(--shadow-xl)] print:shadow-none">
       {/* ===== ヘッダー ===== */}
-      <div className="bg-[var(--color-primary)] text-white px-8 py-6 print:px-6 print:py-5" style={{ color: 'white' }}>
+      <div className="bg-[var(--color-primary)] text-white px-8 py-6 print:px-6 print:py-5">
         <div className="flex items-start justify-between">
           <div>
             <p className="text-xs font-medium opacity-70 tracking-widest uppercase">HIKARU Quality Report</p>
@@ -105,7 +106,7 @@ function ReportDocument({ content, reportVersion, reportDate }: {
 
         {/* ===== 概要テーブル ===== */}
         <section>
-          <h2 className="section-header text-sm font-bold text-gray-500 uppercase tracking-wider mb-3 border-b border-gray-200 pb-1.5">
+          <h2 className="section-header text-sm font-bold text-[var(--color-muted-foreground)] uppercase tracking-wider mb-3 border-b border-[var(--color-border)] pb-1.5">
             作業概要
           </h2>
           <table className="w-full text-sm border-collapse">
@@ -121,9 +122,9 @@ function ReportDocument({ content, reportVersion, reportDate }: {
                 ['終了時刻',  job.completed_at ? formatDateTime(job.completed_at) : '—'],
                 ['作業時間',  calcWorkDuration(job.started_at, job.completed_at)],
               ].map(([label, value]) => (
-                <tr key={label} className="border-b border-gray-100">
-                  <td className="py-2 pr-4 w-32 text-gray-600 font-medium">{label}</td>
-                  <td className="py-2 font-medium text-gray-900">{value}</td>
+                <tr key={label} className="border-b border-[var(--color-border)]/50">
+                  <td className="py-2 pr-4 w-32 text-[var(--color-muted-foreground)] font-medium">{label}</td>
+                  <td className="py-2 font-medium text-[var(--color-foreground)]">{value}</td>
                 </tr>
               ))}
             </tbody>
@@ -132,22 +133,22 @@ function ReportDocument({ content, reportVersion, reportDate }: {
 
         {/* ===== 品質スコアサマリー ===== */}
         <section>
-          <h2 className="section-header text-sm font-bold text-gray-500 uppercase tracking-wider mb-3 border-b border-gray-200 pb-1.5">
+          <h2 className="section-header text-sm font-bold text-[var(--color-muted-foreground)] uppercase tracking-wider mb-3 border-b border-[var(--color-border)] pb-1.5">
             品質評価サマリー
           </h2>
-          <div className="flex items-center gap-6 rounded-[var(--radius-xl)] border border-gray-200 bg-gray-50 px-5 py-4">
+          <div className="flex items-center gap-6 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-muted)]/30 px-5 py-4">
             <ScoreCircle score={summary.overall_score} />
             <div className="flex-1">
               <div className="flex items-baseline gap-2">
                 <span className={cn('text-4xl font-bold', getScoreColor(summary.overall_score))}>
                   {summary.overall_score}
                 </span>
-                <span className="text-lg text-gray-500">/ 100点</span>
+                <span className="text-lg text-[var(--color-muted-foreground)]">/ 100点</span>
                 <span className={cn('text-sm font-semibold ml-2', getScoreColor(summary.overall_score))}>
                   {getScoreLabel(summary.overall_score)}
                 </span>
               </div>
-              <div className="flex gap-4 mt-2 text-xs text-gray-600">
+              <div className="flex gap-4 mt-2 text-xs text-[var(--color-muted-foreground)]">
                 <span className="flex items-center gap-1">
                   <CheckCircle2 className="h-3.5 w-3.5 text-[var(--color-success)]" />
                   合格: {summary.passed_count}箇所
@@ -171,35 +172,35 @@ function ReportDocument({ content, reportVersion, reportDate }: {
 
         {/* ===== AI作業内容要約 ===== */}
         <section>
-          <h2 className="section-header text-sm font-bold text-gray-500 uppercase tracking-wider mb-3 border-b border-gray-200 pb-1.5">
+          <h2 className="section-header text-sm font-bold text-[var(--color-muted-foreground)] uppercase tracking-wider mb-3 border-b border-[var(--color-border)] pb-1.5">
             本日の作業内容
           </h2>
-          <p className="text-sm leading-relaxed text-gray-900">{summary.work_summary}</p>
+          <p className="text-sm leading-relaxed text-[var(--color-foreground)]">{summary.work_summary}</p>
         </section>
 
         {/* ===== 品質評価総括 ===== */}
         <section>
-          <h2 className="section-header text-sm font-bold text-gray-500 uppercase tracking-wider mb-3 border-b border-gray-200 pb-1.5">
+          <h2 className="section-header text-sm font-bold text-[var(--color-muted-foreground)] uppercase tracking-wider mb-3 border-b border-[var(--color-border)] pb-1.5">
             品質評価
           </h2>
-          <p className="text-sm leading-relaxed text-gray-900">{summary.quality_assessment}</p>
+          <p className="text-sm leading-relaxed text-[var(--color-foreground)]">{summary.quality_assessment}</p>
         </section>
 
         {/* ===== 箇所別詳細 ===== */}
         <section>
-          <h2 className="section-header text-sm font-bold text-gray-500 uppercase tracking-wider mb-4 border-b border-gray-200 pb-1.5">
+          <h2 className="section-header text-sm font-bold text-[var(--color-muted-foreground)] uppercase tracking-wider mb-4 border-b border-[var(--color-border)] pb-1.5">
             撮影箇所別詳細 （{spots.length}箇所）
           </h2>
           <div className="space-y-5">
             {spots.map((spot) => (
-              <div key={spot.name} className="spot-card border border-gray-200 rounded-[var(--radius-xl)] overflow-hidden">
+              <div key={spot.name} className="spot-card border border-[var(--color-border)] rounded-[var(--radius-xl)] overflow-hidden">
                 {/* スポットヘッダー */}
-                <div className="flex items-center justify-between bg-gray-50 px-4 py-2.5 border-b border-gray-200">
+                <div className="flex items-center justify-between bg-[var(--color-muted)]/40 px-4 py-2.5 border-b border-[var(--color-border)]">
                   <div className="flex items-center gap-2">
                     <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--color-primary)] text-white text-[10px] font-bold shrink-0">
                       {spot.order}
                     </span>
-                    <h3 className="font-bold text-base text-gray-900">{spot.name}</h3>
+                    <h3 className="font-bold text-base text-[var(--color-foreground)]">{spot.name}</h3>
                   </div>
                   <div className="flex items-center gap-2">
                     {spot.score != null && (
@@ -216,32 +217,32 @@ function ReportDocument({ content, reportVersion, reportDate }: {
                   {(spot.before_url || spot.after_url) && (
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
-                        <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Before（清掃前）</p>
+                        <p className="text-[10px] font-semibold text-[var(--color-muted-foreground)] uppercase tracking-wide">Before（清掃前）</p>
                         {spot.before_url ? (
                           /* eslint-disable-next-line @next/next/no-img-element */
                           <img
                             src={spot.before_url}
                             alt={`${spot.name} Before`}
-                            className="w-full aspect-[4/3] object-cover rounded-[var(--radius-lg)] border border-gray-200"
+                            className="w-full aspect-[4/3] object-cover rounded-[var(--radius-lg)] border border-[var(--color-border)]"
                           />
                         ) : (
-                          <div className="aspect-[4/3] bg-gray-100 rounded-[var(--radius-lg)] flex items-center justify-center">
-                            <p className="text-xs text-gray-400">写真なし</p>
+                          <div className="aspect-[4/3] bg-[var(--color-muted)] rounded-[var(--radius-lg)] flex items-center justify-center">
+                            <p className="text-xs text-[var(--color-muted-foreground)]">写真なし</p>
                           </div>
                         )}
                       </div>
                       <div className="space-y-1">
-                        <p className="text-[10px] font-semibold text-green-700 uppercase tracking-wide">After（清掃後）</p>
+                        <p className="text-[10px] font-semibold text-[var(--color-success-foreground)] uppercase tracking-wide">After（清掃後）</p>
                         {spot.after_url ? (
                           /* eslint-disable-next-line @next/next/no-img-element */
                           <img
                             src={spot.after_url}
                             alt={`${spot.name} After`}
-                            className="w-full aspect-[4/3] object-cover rounded-[var(--radius-lg)] border border-gray-200"
+                            className="w-full aspect-[4/3] object-cover rounded-[var(--radius-lg)] border border-[var(--color-border)]"
                           />
                         ) : (
-                          <div className="aspect-[4/3] bg-gray-100 rounded-[var(--radius-lg)] flex items-center justify-center">
-                            <p className="text-xs text-gray-400">写真なし</p>
+                          <div className="aspect-[4/3] bg-[var(--color-muted)] rounded-[var(--radius-lg)] flex items-center justify-center">
+                            <p className="text-xs text-[var(--color-muted-foreground)]">写真なし</p>
                           </div>
                         )}
                       </div>
@@ -250,22 +251,22 @@ function ReportDocument({ content, reportVersion, reportDate }: {
 
                   {/* AIコメント */}
                   {spot.ai_comment && (
-                    <div className="rounded-[var(--radius-lg)] bg-blue-50 border border-blue-200 px-3 py-2.5">
-                      <p className="text-xs font-semibold text-blue-700 mb-1 flex items-center gap-1">
+                    <div className="rounded-[var(--radius-lg)] bg-[var(--color-primary-muted)] border border-[var(--color-primary)]/20 px-3 py-2.5">
+                      <p className="text-xs font-semibold text-[var(--color-primary)] mb-1 flex items-center gap-1">
                         <Sparkles className="h-3 w-3" /> AIコメント
                       </p>
-                      <p className="text-sm text-gray-900 leading-relaxed">{spot.ai_comment}</p>
+                      <p className="text-sm text-[var(--color-foreground)] leading-relaxed">{spot.ai_comment}</p>
                     </div>
                   )}
 
                   {/* 改善提案 */}
                   {spot.improvements.length > 0 && (
                     <div>
-                      <p className="text-xs font-semibold text-gray-600 mb-1">改善提案</p>
+                      <p className="text-xs font-semibold text-[var(--color-muted-foreground)] mb-1">改善提案</p>
                       <ul className="space-y-0.5">
                         {spot.improvements.map((imp, i) => (
-                          <li key={i} className="text-xs text-gray-800 flex items-start gap-1">
-                            <span className="text-amber-500 mt-0.5 shrink-0">•</span>
+                          <li key={i} className="text-xs text-[var(--color-foreground)] flex items-start gap-1">
+                            <span className="text-[var(--color-warning)] mt-0.5 shrink-0">•</span>
                             {imp}
                           </li>
                         ))}
@@ -280,17 +281,17 @@ function ReportDocument({ content, reportVersion, reportDate }: {
 
         {/* ===== 総合評価 ===== */}
         <section>
-          <h2 className="section-header text-sm font-bold text-gray-500 uppercase tracking-wider mb-3 border-b border-gray-200 pb-1.5">
+          <h2 className="section-header text-sm font-bold text-[var(--color-muted-foreground)] uppercase tracking-wider mb-3 border-b border-[var(--color-border)] pb-1.5">
             総合評価
           </h2>
-          <div className="rounded-[var(--radius-xl)] border border-gray-200 bg-gray-50 px-5 py-4 space-y-3">
-            <p className="text-sm leading-relaxed text-gray-900">{summary.total_comment}</p>
+          <div className="rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-muted)]/30 px-5 py-4 space-y-3">
+            <p className="text-sm leading-relaxed text-[var(--color-foreground)]">{summary.total_comment}</p>
             {summary.next_recommendations.length > 0 && (
               <div>
-                <p className="text-xs font-semibold text-gray-600 mb-2">次回作業への推奨事項</p>
+                <p className="text-xs font-semibold text-[var(--color-muted-foreground)] mb-2">次回作業への推奨事項</p>
                 <ul className="space-y-1">
                   {summary.next_recommendations.map((rec, i) => (
-                    <li key={i} className="text-xs text-gray-800 flex items-start gap-1.5">
+                    <li key={i} className="text-xs text-[var(--color-foreground)] flex items-start gap-1.5">
                       <span className="text-[var(--color-primary)] mt-0.5">→</span>
                       {rec}
                     </li>
@@ -302,12 +303,12 @@ function ReportDocument({ content, reportVersion, reportDate }: {
         </section>
 
         {/* ===== フッター ===== */}
-        <footer className="border-t border-gray-200 pt-4 mt-6 flex items-center justify-between">
-          <div className="text-xs text-gray-500">
+        <footer className="border-t border-[var(--color-border)] pt-4 mt-6 flex items-center justify-between">
+          <div className="text-xs text-[var(--color-muted-foreground)]">
             <p className="font-semibold text-[var(--color-primary)]">HIKARU 清掃品質管理システム</p>
             <p>生成日時: {new Date(content.generated_at).toLocaleString('ja-JP')}</p>
           </div>
-          <div className="text-xs text-gray-500 text-right">
+          <div className="text-xs text-[var(--color-muted-foreground)] text-right">
             <p>担当: {job.worker_name}</p>
             <p>Ver.{reportVersion}</p>
           </div>
@@ -392,36 +393,26 @@ export default function ReportPage() {
 
   React.useEffect(() => {
     async function init() {
-      try {
-        // todayJob をサーバーAPIで取得（ブラウザSupabase auth.getUser()ハング回避）
-        const res = await fetch(`/api/jobs/${projectId}`, {
-          credentials: 'include',
-          cache:       'no-store',
-        })
-        if (!res.ok) { router.push(`/jobs/${projectId}`); return }
-        const { todayJob } = await res.json()
-        if (!todayJob) { router.push(`/jobs/${projectId}`); return }
-        setJobId(todayJob.id)
+      const job = await getTodayJob(projectId)
+      if (!job) { router.push(`/jobs/${projectId}`); return }
+      setJobId(job.id)
 
-        const hist = await loadReportHistory(todayJob.id)
-        setHistory(hist)
+      const hist = await loadReportHistory(job.id)
+      setHistory(hist)
 
-        // 最新の報告書があれば表示
-        if (hist.length > 0) {
-          const latest = hist[0]
-          const report = await loadReport(latest.id)
-          if (report) {
-            setContent(report.content)
-            setReportId(latest.id)
-            setReportDate(report.created_at)
-            setReportVersion(report.version)
-          }
+      // 最新の報告書があれば表示
+      if (hist.length > 0) {
+        const latest = hist[0]
+        const report = await loadReport(latest.id)
+        if (report) {
+          setContent(report.content)
+          setReportId(latest.id)
+          setReportDate(report.created_at)
+          setReportVersion(report.version)
         }
-      } catch {
-        router.push(`/jobs/${projectId}`)
-      } finally {
-        setLoading(false)
       }
+
+      setLoading(false)
     }
     init()
   }, [projectId, router])
@@ -429,28 +420,19 @@ export default function ReportPage() {
   async function handleGenerate() {
     if (!jobId) return
     setGenerating(true)
-    try {
-      const result = await generateReport(jobId)
-      if (result.success && result.content) {
-        setContent(result.content)
-        setReportId(result.reportId)
-        setReportDate(new Date().toISOString())
-        setReportVersion(result.content.summary ? (history.length + 1) : 1)
-        try {
-          const hist = await loadReportHistory(jobId)
-          setHistory(hist)
-        } catch {
-          // history reload failure is non-critical; report is already saved
-        }
-        toast.success('報告書を生成しました')
-      } else {
-        toast.error(`生成に失敗しました: ${result.error ?? '不明なエラー'}`)
-      }
-    } catch {
-      toast.error('報告書の生成中にエラーが発生しました。再度お試しください。')
-    } finally {
-      setGenerating(false)
+    const result = await generateReport(jobId)
+    if (result.success && result.content) {
+      setContent(result.content)
+      setReportId(result.reportId)
+      setReportDate(new Date().toISOString())
+      setReportVersion(result.content.summary ? (history.length + 1) : 1)
+      const hist = await loadReportHistory(jobId)
+      setHistory(hist)
+      toast.success('報告書を生成しました')
+    } else {
+      toast.error(`生成に失敗しました: ${result.error}`)
     }
+    setGenerating(false)
   }
 
   async function handleSelectHistory(id: string) {

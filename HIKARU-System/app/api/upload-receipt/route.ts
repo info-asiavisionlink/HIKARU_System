@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/server'
+import { createClient as createSupabaseAdmin } from '@supabase/supabase-js'
+
+const admin = createSupabaseAdmin(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  { auth: { autoRefreshToken: false, persistSession: false } }
+)
 
 // POST /api/upload-receipt
 // ファイルを receipts バケットへアップロードし expense_receipts に記録
 export async function POST(req: NextRequest) {
-  const admin = createAdminClient()
   const uid = req.cookies.get('hk_s_uid')?.value
   if (!uid) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 

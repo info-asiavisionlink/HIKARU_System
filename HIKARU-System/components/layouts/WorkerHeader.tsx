@@ -1,9 +1,10 @@
 'use client'
 
 import * as React from 'react'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Menu } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { cn } from '@hikaru/ui'
+import { useMenuContext } from './WorkerLayout'
 
 interface WorkerHeaderProps {
   title: string
@@ -14,11 +15,12 @@ interface WorkerHeaderProps {
 
 export function WorkerHeader({ title, showBack = false, rightAction, className }: WorkerHeaderProps) {
   const router = useRouter()
+  const { openMenu } = useMenuContext()
 
   return (
     <header
       className={cn(
-        'sticky top-0 z-[var(--z-sticky)]',
+        'sticky top-[var(--header-height)] z-[40]',
         'flex items-center h-[var(--header-height)] px-4 gap-3 relative',
         className
       )}
@@ -52,13 +54,35 @@ export function WorkerHeader({ title, showBack = false, rightAction, className }
           <ArrowLeft className="h-5 w-5" />
         </button>
       ) : (
-        <span className="text-[9px] font-black tracking-[0.3em] uppercase"
+        <button
+          onClick={openMenu}
+          aria-label="メニューを開く"
+          className="rounded-full p-2 -ml-1 transition-all duration-150 active:scale-90 focus:outline-none"
+          style={{ color: 'oklch(0.55 0.007 75)' }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = 'oklch(0.73 0.12 78)'
+            e.currentTarget.style.background = 'oklch(0.73 0.12 78 / 0.08)'
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = 'oklch(0.55 0.007 75)'
+            e.currentTarget.style.background = 'transparent'
+          }}
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+      )}
+
+      {/* HIKARU logo badge */}
+      {!showBack && (
+        <span
+          className="text-[9px] font-black tracking-[0.3em] uppercase"
           style={{
             background: 'linear-gradient(90deg, oklch(0.62 0.11 75), oklch(0.82 0.13 78))',
             WebkitBackgroundClip: 'text',
             WebkitTextFillColor: 'transparent',
             backgroundClip: 'text',
-          }}>
+          }}
+        >
           HIKARU
         </span>
       )}

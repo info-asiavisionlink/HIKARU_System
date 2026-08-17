@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import Link from 'next/link'
-import { type WorkerProject } from '@/services/worker-projects.service'
+import { getWorkerProjects, type WorkerProject } from '@/services/worker-projects.service'
 import { cn } from '@hikaru/ui'
 import {
   Search, X, MapPin, ChevronRight,

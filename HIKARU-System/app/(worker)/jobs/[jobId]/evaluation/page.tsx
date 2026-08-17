@@ -3,6 +3,8 @@
 import * as React from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import { createClient } from '@/lib/supabase/client'
+import { getTodayJob, completeJob } from '@/services/jobs.service'
 import {
   evaluateAllSpots, loadEvaluations,
   getScoreInfo, RECOMMENDATION_CONFIG,
@@ -213,30 +215,24 @@ export default function EvaluationPage() {
   // 初期化
   React.useEffect(() => {
     async function init() {
-      try {
-        // todayJob + 写真をサーバーAPIで取得（ブラウザSupabase auth.getUser()ハング回避）
-        const res = await fetch(`/api/jobs/${projectId}`, {
-          credentials: 'include',
-          cache:       'no-store',
-        })
-        if (!res.ok) { router.push(`/jobs/${projectId}`); return }
-        const { todayJob, photos } = await res.json()
-        if (!todayJob) { router.push(`/jobs/${projectId}`); return }
-        setJobId(todayJob.id)
-        setPhotos(photos ?? [])
+      const supabase = createClient()
+      const job = await getTodayJob(projectId)
+      if (!job) { router.push(`/jobs/${projectId}`); return }
+      setJobId(job.id)
 
-        // 既存の評価
-        const existing = await loadEvaluations(todayJob.id)
-        setEvaluations(existing)
+      // 写真データ
+      const { data: ph } = await supabase.from('photos').select('*').eq('job_id', job.id)
+      setPhotos(ph ?? [])
 
-        // ?run=1 なら自動実行
-        if (autoRun && existing.length === 0) {
-          setTimeout(() => runEvaluation(todayJob.id), 300)
-        }
-      } catch {
-        router.push(`/jobs/${projectId}`)
-      } finally {
-        setLoading(false)
+      // 既存の評価
+      const existing = await loadEvaluations(job.id)
+      setEvaluations(existing)
+
+      setLoading(false)
+
+      // ?run=1 なら自動実行
+      if (autoRun && existing.length === 0) {
+        setTimeout(() => runEvaluation(job.id), 300)
       }
     }
     init()
@@ -264,25 +260,14 @@ export default function EvaluationPage() {
   async function handleComplete() {
     if (!jobId) return
     setCompleting(true)
-    try {
-      const res = await fetch('/api/jobs/complete', {
-        method:      'POST',
-        credentials: 'include',
-        headers:     { 'Content-Type': 'application/json' },
-        body:        JSON.stringify({ jobId }),
-      })
-      if (res.ok) {
-        toast.success('作業完了しました！お疲れ様でした！')
-        router.replace(`/jobs`)
-      } else {
-        const json = await res.json().catch(() => ({}))
-        toast.error((json as { error?: string }).error ?? '完了処理に失敗しました')
-      }
-    } catch {
-      toast.error('通信エラーが発生しました')
-    } finally {
-      setCompleting(false)
+    const ok = await completeJob(jobId)
+    if (ok) {
+      toast.success('作業完了しました！お疲れ様でした！')
+      router.replace(`/jobs`)
+    } else {
+      toast.error('完了処理に失敗しました')
     }
+    setCompleting(false)
   }
 
   // 写真URLマップ

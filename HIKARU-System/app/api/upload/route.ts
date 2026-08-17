@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/server'
+import { createClient } from '@supabase/supabase-js'
 
 // Service Role Key でアップロード（RLS バイパス） — 案件提案書専用
 // セキュリティ: hk_s_uid Cookie で認証済みユーザーのみアクセス可能
+const adminClient = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+)
 
 const ALLOWED_PATH_PREFIX = 'proposals/'
 
@@ -13,8 +17,6 @@ export async function POST(req: NextRequest) {
   if (!uid || role !== 'worker') {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
-
-  const adminClient = createAdminClient()
 
   try {
     const form = await req.formData()
