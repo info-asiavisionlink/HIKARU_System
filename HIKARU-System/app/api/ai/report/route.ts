@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/server'
 import {
   generateReportContent,
   calcWorkDuration,
@@ -12,12 +12,12 @@ import type { SpotInput } from '@/modules/report-ai/prompts'
 
 // ============================================================
 // POST /api/ai/report — 報告書生成
+// 認証: hk_s_uid cookie（ミドルウェア検証済み）
 // ============================================================
 
 export async function POST(req: NextRequest) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) {
+  const uid = req.cookies.get('hk_s_uid')?.value
+  if (!uid) {
     return Response.json({ success: false, error: { code: 'UNAUTHORIZED', message: '認証が必要です' } }, { status: 401 })
   }
 
@@ -26,9 +26,11 @@ export async function POST(req: NextRequest) {
     return Response.json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'jobIdが必要です' } }, { status: 400 })
   }
 
+  const admin = createAdminClient()
+
   try {
     // ---- データ収集 ----
-    const { data: job } = await supabase
+    const { data: job } = await admin
       .from('jobs')
       .select(`
         id, project_id, worker_id, company_id,
@@ -40,7 +42,7 @@ export async function POST(req: NextRequest) {
         profiles(name)
       `)
       .eq('id', jobId)
-      .eq('worker_id', user.id)
+      .eq('worker_id', uid)
       .single()
 
     if (!job) {
@@ -50,20 +52,20 @@ export async function POST(req: NextRequest) {
     const project = (job as any).projects
 
     // ---- 写真取得 ----
-    const { data: photos } = await supabase
+    const { data: photos } = await admin
       .from('photos')
       .select('id, spot_id, photo_type, url')
       .eq('job_id', jobId)
 
     // ---- AI評価取得 ----
-    const { data: evaluations } = await supabase
+    const { data: evaluations } = await admin
       .from('ai_evaluations')
       .select('*, photo_spots(id, name, order_num, is_required)')
       .eq('job_id', jobId)
       .order('created_at', { ascending: true })
 
     // ---- 撮影箇所一覧（project_id ベース） ----
-    const { data: allSpots } = await supabase
+    const { data: allSpots } = await admin
       .from('photo_spots')
       .select('id, name, order_num, is_required')
       .eq('project_id', job.project_id)
@@ -138,7 +140,7 @@ export async function POST(req: NextRequest) {
     }
 
     // ---- 報告書コンテンツ構築 ----
-    const { data: existingReport } = await supabase
+    const { data: existingReport } = await admin
       .from('reports')
       .select('version')
       .eq('job_id', jobId)
@@ -182,12 +184,12 @@ export async function POST(req: NextRequest) {
     }
 
     // ---- DB保存 ----
-    const { data: saved, error: saveErr } = await supabase
+    const { data: saved, error: saveErr } = await admin
       .from('reports')
       .insert({
         job_id:        jobId,
         project_id:    job.project_id,
-        worker_id:     user.id,
+        worker_id:     uid,
         company_id:    job.company_id,
         version,
         content,
@@ -210,22 +212,31 @@ export async function POST(req: NextRequest) {
 
 // ============================================================
 // GET /api/ai/report?jobId=xxx — 報告書履歴取得
+//     /api/ai/report?reportId=xxx — 単一報告書取得
+// 認証: hk_s_uid cookie（ミドルウェア検証済み）
 // ============================================================
 
 export async function GET(req: NextRequest) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) {
+  const uid = req.cookies.get('hk_s_uid')?.value
+  if (!uid) {
     return Response.json({ success: false, error: { code: 'UNAUTHORIZED', message: '認証が必要です' } }, { status: 401 })
   }
 
   const jobId    = new URL(req.url).searchParams.get('jobId')
   const reportId = new URL(req.url).searchParams.get('reportId')
 
+  const admin = createAdminClient()
+
   if (reportId) {
-    const { data, error } = await supabase.from('reports').select('*').eq('id', reportId).single()
+    // ---- reportId指定: report → job ownership確認 ----
+    const { data, error } = await admin.from('reports').select('*').eq('id', reportId).single()
     if (error || !data) {
       return Response.json({ success: false, error: { code: 'NOT_FOUND', message: '報告書が見つかりません' } }, { status: 404 })
+    }
+    // report.job_id → jobs.worker_id === uid（他WorkerのReportへのアクセス防止）
+    const { data: job } = await admin.from('jobs').select('id').eq('id', data.job_id).eq('worker_id', uid).maybeSingle()
+    if (!job) {
+      return Response.json({ success: false, error: { code: 'FORBIDDEN', message: 'このレポートへのアクセス権がありません' } }, { status: 403 })
     }
     return Response.json({ success: true, data })
   }
@@ -234,7 +245,13 @@ export async function GET(req: NextRequest) {
     return Response.json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'jobIdが必要です' } }, { status: 400 })
   }
 
-  const { data, error } = await supabase
+  // ---- jobId指定: job ownership確認してからreports取得 ----
+  const { data: job } = await admin.from('jobs').select('id').eq('id', jobId).eq('worker_id', uid).maybeSingle()
+  if (!job) {
+    return Response.json({ success: false, error: { code: 'FORBIDDEN', message: 'このジョブへのアクセス権がありません' } }, { status: 403 })
+  }
+
+  const { data, error } = await admin
     .from('reports')
     .select('id, version, overall_score, created_at')
     .eq('job_id', jobId)
