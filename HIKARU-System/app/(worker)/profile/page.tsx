@@ -2,11 +2,10 @@
 
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
 import { signOut } from '@/services/auth.service'
 import { WorkerHeader } from '@/components/layouts/WorkerHeader'
-import { cn, toast } from '@hikaru/ui'
-import { User, Mail, Phone, LogOut, ChevronRight, Shield } from 'lucide-react'
+import { cn } from '@hikaru/ui'
+import { Mail, Phone, LogOut, Shield } from 'lucide-react'
 
 const roleLabel: Record<string, string> = {
   admin:  '管理者',
@@ -21,16 +20,23 @@ export default function ProfilePage() {
 
   React.useEffect(() => {
     async function load() {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { router.replace('/login'); return }
-      const { data } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single()
-      setProfile(data)
-      setLoading(false)
+      try {
+        // Server API経由でプロフィール取得（Browser Supabase auth.getUser() hang回避）
+        const res = await fetch('/api/profile', {
+          credentials: 'include',
+          cache:       'no-store',
+        })
+        if (!res.ok) {
+          router.replace('/login')
+          return
+        }
+        const { profile } = await res.json()
+        setProfile(profile)
+      } catch {
+        router.replace('/login')
+      } finally {
+        setLoading(false)
+      }
     }
     load()
   }, [router])
@@ -74,9 +80,9 @@ export default function ProfilePage() {
       {/* 情報リスト */}
       <div className="mt-4 bg-[var(--color-surface)] border-y border-[var(--color-border)] divide-y divide-[var(--color-border)]">
         {[
-          { icon: Mail,  label: 'メールアドレス', value: profile?.email },
-          { icon: Phone, label: '電話番号',        value: profile?.phone ?? '未登録' },
-          { icon: Shield, label: '権限',          value: roleLabel[profile?.role] ?? profile?.role },
+          { icon: Mail,   label: 'メールアドレス', value: profile?.email },
+          { icon: Phone,  label: '電話番号',        value: profile?.phone ?? '未登録' },
+          { icon: Shield, label: '権限',            value: roleLabel[profile?.role] ?? profile?.role },
         ].map((row) => (
           <div key={row.label} className="flex items-center gap-3 px-4 py-3.5">
             <row.icon className="h-4.5 w-4.5 text-[var(--color-muted-foreground)] shrink-0" />

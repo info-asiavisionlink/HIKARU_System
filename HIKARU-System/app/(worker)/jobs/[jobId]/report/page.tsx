@@ -86,7 +86,7 @@ function ReportDocument({ content, reportVersion, reportDate }: {
   const { project, store, client, job, spots, summary } = content
 
   return (
-    <div className="report-page bg-white max-w-[800px] mx-auto shadow-[var(--shadow-xl)] print:shadow-none">
+    <div className="report-page bg-white max-w-[800px] mx-auto shadow-[var(--shadow-xl)] print:shadow-none [--color-foreground:#111827] [--color-muted-foreground:#6B7280] [--color-border:#E5E7EB] [--color-muted:#F3F4F6]">
       {/* ===== ヘッダー ===== */}
       <div className="bg-[var(--color-primary)] text-white px-8 py-6 print:px-6 print:py-5">
         <div className="flex items-start justify-between">

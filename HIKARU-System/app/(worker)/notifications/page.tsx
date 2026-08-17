@@ -1,7 +1,6 @@
 'use client'
 
 import * as React from 'react'
-import { createClient } from '@/lib/supabase/client'
 import { WorkerHeader } from '@/components/layouts/WorkerHeader'
 import { cn } from '@hikaru/ui'
 import { Bell, Info, AlertTriangle, AlertCircle, CheckCircle2 } from 'lucide-react'
@@ -10,17 +9,17 @@ interface NotificationRow {
   id: string
   title: string
   body: string | null
-  type: 'info' | 'warning' | 'error' | 'success'
+  type: string
   is_read: boolean
   target_url: string | null
   created_at: string
 }
 
-const typeConfig = {
-  info:    { icon: Info,          color: 'text-[var(--color-primary)]'  },
-  warning: { icon: AlertTriangle, color: 'text-[var(--color-warning)]'  },
-  error:   { icon: AlertCircle,   color: 'text-[var(--color-error)]'    },
-  success: { icon: CheckCircle2,  color: 'text-[var(--color-success)]'  },
+const typeConfig: Record<string, { icon: React.ElementType; color: string }> = {
+  info:    { icon: Info,          color: 'text-[var(--color-primary)]' },
+  warning: { icon: AlertTriangle, color: 'text-[var(--color-warning)]' },
+  error:   { icon: AlertCircle,   color: 'text-[var(--color-error)]'   },
+  success: { icon: CheckCircle2,  color: 'text-[var(--color-success)]' },
 }
 
 export default function NotificationsPage() {
@@ -29,19 +28,28 @@ export default function NotificationsPage() {
 
   React.useEffect(() => {
     async function load() {
-      const supabase = createClient()
-      const { data } = await supabase
-        .from('notifications')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(30)
-      setItems((data as NotificationRow[]) ?? [])
-      setLoading(false)
+      try {
+        // Server API経由でWorker向け通知を取得（Browser Supabase auth hang回避）
+        const res = await fetch('/api/notifications', {
+          credentials: 'include',
+          cache:       'no-store',
+        })
+        if (!res.ok) return
+        const { notifications } = await res.json()
+        setItems(notifications ?? [])
 
-      // 既読にする
-      const unread = (data ?? []).filter((n: any) => !n.is_read).map((n: any) => n.id)
-      if (unread.length > 0) {
-        await supabase.from('notifications').update({ is_read: true }).in('id', unread)
+        // 未読があれば一括既読化（Server API経由・fire-and-forget）
+        const hasUnread = (notifications ?? []).some((n: NotificationRow) => !n.is_read)
+        if (hasUnread) {
+          fetch('/api/notifications/read-all', {
+            method:      'PATCH',
+            credentials: 'include',
+          }).catch(() => {})
+        }
+      } catch {
+        // エラー時もLoading解除
+      } finally {
+        setLoading(false)
       }
     }
     load()
@@ -74,7 +82,7 @@ export default function NotificationsPage() {
               >
                 <Icon className={cn('h-5 w-5 mt-0.5 shrink-0', color)} />
                 <div className="flex-1 min-w-0">
-                  <p className={cn('text-sm font-medium', !n.is_read && 'font-semibold')}>
+                  <p className={cn('text-sm font-medium text-[var(--color-foreground)]', !n.is_read && 'font-semibold')}>
                     {n.title}
                   </p>
                   {n.body && <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">{n.body}</p>}
