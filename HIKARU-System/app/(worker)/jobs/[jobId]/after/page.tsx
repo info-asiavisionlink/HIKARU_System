@@ -85,14 +85,19 @@ export default function AfterPage() {
       return
     }
     setCompleting(true)
-    const ok = await completeJob(jobId)
-    if (ok) {
-      toast.success('作業完了しました！お疲れ様でした！')
-      router.replace(`/jobs/${projectId}`)
-    } else {
+    try {
+      const ok = await completeJob(jobId)
+      if (ok) {
+        toast.success('作業完了しました！お疲れ様でした！')
+        router.replace(`/jobs/${projectId}`)
+      } else {
+        toast.error('完了処理に失敗しました')
+      }
+    } catch {
       toast.error('完了処理に失敗しました')
+    } finally {
+      setCompleting(false)
     }
-    setCompleting(false)
   }
 
   const afterCount = spots.filter((s) => !!getSpotPhoto(s.id, 'after')).length

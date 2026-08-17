@@ -103,16 +103,23 @@ export default function JobDetailPage() {
     }
 
     setCompleting(true)
-    const ok = await completeJob(activeJob.id)
+    let ok = false
+    try {
+      ok = await completeJob(activeJob.id)
+    } catch {
+      toast.error('完了処理に失敗しました')
+      return
+    } finally {
+      setCompleting(false)
+    }
+
     if (!ok) {
       toast.error('完了処理に失敗しました')
-      setCompleting(false)
       return
     }
 
     const completedAt = new Date().toISOString()
     setActiveJob((prev: any) => ({ ...prev, status: 'completed', completed_at: completedAt }))
-    setCompleting(false)
 
     // 報告書を自動生成
     setGeneratingReport(true)

@@ -80,16 +80,17 @@ export async function getTodayJob(projectId: string): Promise<JobRow | null> {
 }
 
 export async function completeJob(jobId: string): Promise<boolean> {
-  const supabase = createClient()
-  const { error } = await supabase
-    .from('jobs')
-    .update({
-      status:       'completed',
-      completed_at: new Date().toISOString(),
+  try {
+    const res = await fetch('/api/jobs/complete', {
+      method:      'POST',
+      headers:     { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body:        JSON.stringify({ jobId }),
     })
-    .eq('id', jobId)
-
-  return !error
+    return res.ok
+  } catch {
+    return false
+  }
 }
 
 export async function getJobById(jobId: string): Promise<JobRow | null> {
