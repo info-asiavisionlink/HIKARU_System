@@ -10,6 +10,9 @@ import {
 } from '@/modules/report-ai'
 import type { SpotInput } from '@/modules/report-ai/prompts'
 
+// Vercel Pro: Node.js runtime — allow up to 90s for OpenAI(60s) + DB ops + response margin
+export const maxDuration = 90
+
 // ============================================================
 // POST /api/ai/report — 報告書生成
 // 認証: hk_s_uid cookie（ミドルウェア検証済み）
@@ -200,6 +203,18 @@ export async function POST(req: NextRequest) {
 
     if (saveErr) console.error('[report] save error:', saveErr.message)
 
+    // 報告書生成のたびに管理者へSystem通知（fire-and-forget・報告書処理を失敗させない）
+    if (saved?.id) {
+      void notifyAdminsOfReportSubmitted({
+        reportId:    saved.id,
+        companyId:   job.company_id,
+        workerName,
+        projectName: project?.name ?? '—',
+        overallScore,
+        version,
+      })
+    }
+
     return Response.json({ success: true, data: { reportId: saved?.id, content } })
   } catch (err) {
     console.error('[report] error:', (err as Error).message)
@@ -207,6 +222,46 @@ export async function POST(req: NextRequest) {
       { success: false, error: { code: 'AI_ERROR', message: (err as Error).message } },
       { status: 500 }
     )
+  }
+}
+
+// ============================================================
+// 管理者System通知: 作業完了報告（fire-and-forget）
+// ============================================================
+
+async function notifyAdminsOfReportSubmitted({
+  reportId, companyId, workerName, projectName, overallScore, version,
+}: {
+  reportId: string; companyId: string; workerName: string
+  projectName: string; overallScore: number; version: number
+}): Promise<void> {
+  try {
+    const admin = createAdminClient()
+
+    const { data: admins } = await admin
+      .from('profiles')
+      .select('id')
+      .eq('company_id', companyId)
+      .eq('role', 'admin')
+
+    if (!admins || admins.length === 0) return
+
+    const title = version === 1 ? '作業完了報告が届きました' : '報告書が更新されました'
+    const rows = admins.map((a: { id: string }) => ({
+      company_id:           companyId,
+      recipient_profile_id: a.id,
+      title,
+      body:                 `${workerName}さんが「${projectName}」の報告書を${version === 1 ? '提出' : '更新'}しました。スコア: ${overallScore}点`,
+      type:                 'project_report_submitted',
+      target_app:           'console',
+      is_read:              false,
+      target_url:           `/reports/${reportId}`,
+    }))
+
+    const { error } = await admin.from('notifications').insert(rows)
+    if (error) console.error('[Admin通知] 報告書通知挿入失敗:', error.message)
+  } catch (e) {
+    console.error('[Admin通知] 報告書通知 予期しないエラー:', e)
   }
 }
 
