@@ -2,7 +2,6 @@
 
 import * as React from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { getTodayJob } from '@/services/jobs.service'
 import {
   generateReport, loadReportHistory, loadReport,
   getScoreColor, getScoreLabel,
@@ -393,26 +392,36 @@ export default function ReportPage() {
 
   React.useEffect(() => {
     async function init() {
-      const job = await getTodayJob(projectId)
-      if (!job) { router.push(`/jobs/${projectId}`); return }
-      setJobId(job.id)
+      try {
+        // ブラウザSupabase auth.getUser() ハングを回避するサーバーAPI経由でtodayJob取得
+        const res = await fetch(`/api/jobs/${projectId}`, {
+          credentials: 'include',
+          cache:       'no-store',
+        })
+        if (!res.ok) { router.push(`/jobs/${projectId}`); return }
+        const { todayJob } = await res.json()
+        if (!todayJob) { router.push(`/jobs/${projectId}`); return }
+        setJobId(todayJob.id)
 
-      const hist = await loadReportHistory(job.id)
-      setHistory(hist)
+        const hist = await loadReportHistory(todayJob.id)
+        setHistory(hist)
 
-      // 最新の報告書があれば表示
-      if (hist.length > 0) {
-        const latest = hist[0]
-        const report = await loadReport(latest.id)
-        if (report) {
-          setContent(report.content)
-          setReportId(latest.id)
-          setReportDate(report.created_at)
-          setReportVersion(report.version)
+        // 最新の報告書があれば表示
+        if (hist.length > 0) {
+          const latest = hist[0]
+          const report = await loadReport(latest.id)
+          if (report) {
+            setContent(report.content)
+            setReportId(latest.id)
+            setReportDate(report.created_at)
+            setReportVersion(report.version)
+          }
         }
+      } catch {
+        router.push(`/jobs/${projectId}`)
+      } finally {
+        setLoading(false)
       }
-
-      setLoading(false)
     }
     init()
   }, [projectId, router])
