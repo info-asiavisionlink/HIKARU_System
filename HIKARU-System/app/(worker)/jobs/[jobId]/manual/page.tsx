@@ -128,7 +128,7 @@ export default function ManualPage() {
   const others   = filtered.filter((m) => m.type !== 'note')
 
   return (
-    <div className="min-h-[calc(100dvh_-_var(--header-height))] bg-[var(--color-background)]">
+    <div className="flex flex-col h-[calc(100dvh_-_var(--header-height))] bg-[var(--color-background)]">
       <WorkerHeader
         title="マニュアル"
         showBack
@@ -143,75 +143,78 @@ export default function ManualPage() {
         }
       />
 
-      {loading ? (
-        <div className="flex justify-center py-16">
-          <div className="h-8 w-8 rounded-full border-2 border-[var(--color-primary)] border-t-transparent animate-spin" />
-        </div>
-      ) : (
-        <>
-          {/* AIチャットバナー */}
-          <Link href={`/jobs/${projectId}/chat`} className="block px-4 pt-6">
-            <div className={cn(
-              'flex items-center gap-3 rounded-[var(--radius-xl)]',
-              'bg-gradient-to-r from-[var(--color-primary)] to-[oklch(0.45_0.22_280)]',
-              'px-4 py-3.5 shadow-[var(--shadow-md)]',
-              'active:scale-[0.98] transition-transform'
-            )}>
-              <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white/20 shrink-0">
-                <Sparkles className="h-5 w-5 text-white" />
-              </span>
-              <div>
-                <p className="text-sm font-semibold text-white">AIアシスタントに質問する</p>
-                <p className="text-xs text-white/75 mt-0.5">このマニュアルを参照して回答します</p>
-              </div>
-            </div>
-          </Link>
-
-          {manuals.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-center px-4">
-              <BookOpen className="h-12 w-12 text-[var(--color-muted-foreground)] opacity-40 mb-3" />
-              <p className="text-sm font-medium text-[var(--color-foreground)]">マニュアルがありません</p>
-              <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">管理者がマニュアルを登録すると表示されます</p>
-            </div>
-          ) : (
-            <>
-              {types.length > 1 && (
-                <div className="flex gap-1.5 px-4 py-3 mt-3 border-y border-[var(--color-border)] overflow-x-auto scrollbar-none bg-[var(--color-surface)]">
-                  <button
-                    onClick={() => setFilter('all')}
-                    className={cn(
-                      'shrink-0 rounded-[var(--radius-full)] px-3.5 py-1.5 text-xs font-medium transition-colors',
-                      filter === 'all' ? 'bg-[var(--color-primary)] text-white' : 'bg-[var(--color-muted)] text-[var(--color-muted-foreground)]'
-                    )}
-                  >
-                    すべて ({manuals.length})
-                  </button>
-                  {types.map((t) => {
-                    const cfg = typeConfig[t]
-                    return (
-                      <button
-                        key={t}
-                        onClick={() => setFilter(t)}
-                        className={cn(
-                          'shrink-0 rounded-[var(--radius-full)] px-3.5 py-1.5 text-xs font-medium transition-colors',
-                          filter === t ? 'bg-[var(--color-primary)] text-white' : 'bg-[var(--color-muted)] text-[var(--color-muted-foreground)]'
-                        )}
-                      >
-                        {cfg.label} ({manuals.filter((m) => m.type === t).length})
-                      </button>
-                    )
-                  })}
+      {/* WorkerHeaderの下でのみスクロールし、コンテンツがHeaderの裏に入らないよう分離 */}
+      <div className="flex-1 overflow-y-auto">
+        {loading ? (
+          <div className="flex justify-center py-16">
+            <div className="h-8 w-8 rounded-full border-2 border-[var(--color-primary)] border-t-transparent animate-spin" />
+          </div>
+        ) : (
+          <>
+            {/* AIチャットバナー */}
+            <Link href={`/jobs/${projectId}/chat`} className="block px-4 pt-6">
+              <div className={cn(
+                'flex items-center gap-3 rounded-[var(--radius-xl)]',
+                'bg-gradient-to-r from-[var(--color-primary)] to-[oklch(0.45_0.22_280)]',
+                'px-4 py-3.5 shadow-[var(--shadow-md)]',
+                'active:scale-[0.98] transition-transform'
+              )}>
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white/20 shrink-0">
+                  <Sparkles className="h-5 w-5 text-white" />
+                </span>
+                <div>
+                  <p className="text-sm font-semibold text-white">AIアシスタントに質問する</p>
+                  <p className="text-xs text-white/75 mt-0.5">このマニュアルを参照して回答します</p>
                 </div>
-              )}
-
-              <div className="px-4 py-4 space-y-3 pb-8">
-                {notes.map((m) => <ManualCard key={m.id} manual={m} />)}
-                {others.map((m) => <ManualCard key={m.id} manual={m} />)}
               </div>
-            </>
-          )}
-        </>
-      )}
+            </Link>
+
+            {manuals.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center px-4">
+                <BookOpen className="h-12 w-12 text-[var(--color-muted-foreground)] opacity-40 mb-3" />
+                <p className="text-sm font-medium text-[var(--color-foreground)]">マニュアルがありません</p>
+                <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">管理者がマニュアルを登録すると表示されます</p>
+              </div>
+            ) : (
+              <>
+                {types.length > 1 && (
+                  <div className="flex gap-1.5 px-4 py-3 mt-3 border-y border-[var(--color-border)] overflow-x-auto scrollbar-none bg-[var(--color-surface)]">
+                    <button
+                      onClick={() => setFilter('all')}
+                      className={cn(
+                        'shrink-0 rounded-[var(--radius-full)] px-3.5 py-1.5 text-xs font-medium transition-colors',
+                        filter === 'all' ? 'bg-[var(--color-primary)] text-white' : 'bg-[var(--color-muted)] text-[var(--color-muted-foreground)]'
+                      )}
+                    >
+                      すべて ({manuals.length})
+                    </button>
+                    {types.map((t) => {
+                      const cfg = typeConfig[t]
+                      return (
+                        <button
+                          key={t}
+                          onClick={() => setFilter(t)}
+                          className={cn(
+                            'shrink-0 rounded-[var(--radius-full)] px-3.5 py-1.5 text-xs font-medium transition-colors',
+                            filter === t ? 'bg-[var(--color-primary)] text-white' : 'bg-[var(--color-muted)] text-[var(--color-muted-foreground)]'
+                          )}
+                        >
+                          {cfg.label} ({manuals.filter((m) => m.type === t).length})
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+
+                <div className="px-4 py-4 space-y-3 pb-8">
+                  {notes.map((m) => <ManualCard key={m.id} manual={m} />)}
+                  {others.map((m) => <ManualCard key={m.id} manual={m} />)}
+                </div>
+              </>
+            )}
+          </>
+        )}
+      </div>
     </div>
   )
 }

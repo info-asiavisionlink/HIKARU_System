@@ -56,48 +56,51 @@ export default function NotificationsPage() {
   }, [])
 
   return (
-    <div className="min-h-[calc(100dvh_-_var(--header-height))] bg-[var(--color-background)]">
+    <div className="flex flex-col h-[calc(100dvh_-_var(--header-height))] bg-[var(--color-background)]">
       <WorkerHeader title="通知" showBack />
 
-      {loading ? (
-        <div className="flex justify-center py-16">
-          <div className="h-8 w-8 rounded-full border-2 border-[var(--color-primary)] border-t-transparent animate-spin" />
-        </div>
-      ) : items.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-center">
-          <Bell className="h-12 w-12 text-[var(--color-muted-foreground)] opacity-40 mb-3" />
-          <p className="text-sm font-medium text-[var(--color-foreground)]">通知はありません</p>
-        </div>
-      ) : (
-        <div className="divide-y divide-[var(--color-border)] pt-px">
-          {items.map((n) => {
-            const { icon: Icon, color } = typeConfig[n.type] ?? typeConfig.info
-            return (
-              <div
-                key={n.id}
-                className={cn(
-                  'flex items-start gap-3 px-4 py-4',
-                  !n.is_read && 'bg-[var(--color-primary-muted)]'
-                )}
-              >
-                <Icon className={cn('h-5 w-5 mt-0.5 shrink-0', color)} />
-                <div className="flex-1 min-w-0">
-                  <p className={cn('text-sm font-medium text-[var(--color-foreground)]', !n.is_read && 'font-semibold')}>
-                    {n.title}
-                  </p>
-                  {n.body && <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">{n.body}</p>}
-                  <p className="mt-1 text-[10px] text-[var(--color-subtle)]">
-                    {new Date(n.created_at).toLocaleString('ja-JP', {
-                      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-                    })}
-                  </p>
+      {/* WorkerHeaderの下でのみスクロールし、コンテンツがHeaderの裏に入らないよう分離 */}
+      <div className="flex-1 overflow-y-auto">
+        {loading ? (
+          <div className="flex justify-center py-16">
+            <div className="h-8 w-8 rounded-full border-2 border-[var(--color-primary)] border-t-transparent animate-spin" />
+          </div>
+        ) : items.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <Bell className="h-12 w-12 text-[var(--color-muted-foreground)] opacity-40 mb-3" />
+            <p className="text-sm font-medium text-[var(--color-foreground)]">通知はありません</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-[var(--color-border)]">
+            {items.map((n) => {
+              const { icon: Icon, color } = typeConfig[n.type] ?? typeConfig.info
+              return (
+                <div
+                  key={n.id}
+                  className={cn(
+                    'flex items-start gap-3 px-4 py-4',
+                    !n.is_read && 'bg-[var(--color-primary-muted)]'
+                  )}
+                >
+                  <Icon className={cn('h-5 w-5 mt-0.5 shrink-0', color)} />
+                  <div className="flex-1 min-w-0">
+                    <p className={cn('text-sm font-medium text-[var(--color-foreground)]', !n.is_read && 'font-semibold')}>
+                      {n.title}
+                    </p>
+                    {n.body && <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">{n.body}</p>}
+                    <p className="mt-1 text-[10px] text-[var(--color-subtle)]">
+                      {new Date(n.created_at).toLocaleString('ja-JP', {
+                        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                      })}
+                    </p>
+                  </div>
+                  {!n.is_read && <span className="h-2 w-2 rounded-full bg-[var(--color-primary)] shrink-0 mt-1.5" />}
                 </div>
-                {!n.is_read && <span className="h-2 w-2 rounded-full bg-[var(--color-primary)] shrink-0 mt-1.5" />}
-              </div>
-            )
-          })}
-        </div>
-      )}
+              )
+            })}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
