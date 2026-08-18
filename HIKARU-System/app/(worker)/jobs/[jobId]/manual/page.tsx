@@ -151,18 +151,17 @@ export default function ManualPage() {
         }
       />
 
-      {/* height を明示指定してコンテンツをWorkerHeader下のみでスクロールさせる */}
       <div
         ref={scrollRef}
-        className="overflow-y-auto"
+        className="overflow-y-auto flex flex-col"
         style={{ height: 'calc(100dvh - calc(var(--header-height) * 2))', overflowAnchor: 'none' }}
       >
         {loading ? (
-          <div className="flex justify-center py-16">
+          <div className="flex-1 flex justify-center items-center">
             <div className="h-8 w-8 rounded-full border-2 border-[var(--color-primary)] border-t-transparent animate-spin" />
           </div>
         ) : (
-          <div className="flex flex-col" style={{ minHeight: '100%' }}>
+          <div className="flex-1 flex flex-col">
             {/* AIチャットバナー */}
             <Link href={`/jobs/${projectId}/chat`} className="block px-4 pt-5 pb-4 shrink-0">
               <div className={cn(

@@ -60,20 +60,23 @@ export default function ProfilePage() {
 
       <div
         ref={scrollRef}
-        className="overflow-y-auto"
+        className="overflow-y-auto flex flex-col"
         style={{
           height: 'calc(100dvh - calc(var(--header-height) * 2))',
           overflowAnchor: 'none',
         }}
       >
         {loading ? (
-          <div className="flex justify-center py-16">
+          <div className="flex-1 flex justify-center items-center">
             <div className="h-8 w-8 rounded-full border-2 border-[var(--color-primary)] border-t-transparent animate-spin" />
           </div>
         ) : (
-          <div className="flex flex-col" style={{ minHeight: '100%' }}>
+          <div className="flex-1 flex flex-col">
+            {/* 上スペーサー */}
+            <div className="flex-1" />
+
             {/* アバター */}
-            <div className="px-4 pt-10 pb-6 flex flex-col items-center gap-3">
+            <div className="px-4 pb-6 flex flex-col items-center gap-3">
               <span className="flex h-20 w-20 items-center justify-center rounded-full bg-[var(--color-primary-muted)] text-2xl font-bold text-[var(--color-primary)]"
                 style={{ boxShadow: '0 0 24px oklch(0.73 0.12 78 / 0.20)' }}>
                 {profile?.name?.slice(0, 2) ?? 'HI'}
@@ -106,11 +109,8 @@ export default function ProfilePage() {
               ))}
             </div>
 
-            {/* スペーサー: ログアウトを下に押し下げる */}
-            <div className="flex-1" />
-
             {/* ログアウト */}
-            <div className="px-4 pb-8 pt-4">
+            <div className="mt-5 px-4">
               <button
                 onClick={handleLogout}
                 className={cn(
@@ -125,6 +125,9 @@ export default function ProfilePage() {
                 ログアウト
               </button>
             </div>
+
+            {/* 下スペーサー */}
+            <div className="flex-1" />
           </div>
         )}
       </div>
