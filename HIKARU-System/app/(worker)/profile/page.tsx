@@ -71,17 +71,17 @@ export default function ProfilePage() {
             <div className="h-8 w-8 rounded-full border-2 border-[var(--color-primary)] border-t-transparent animate-spin" />
           </div>
         ) : (
-          <>
+          <div className="flex flex-col" style={{ minHeight: '100%' }}>
             {/* アバター */}
-            <div className="px-4 pt-8 pb-6 flex flex-col items-center gap-3">
-              <span className="flex h-24 w-24 items-center justify-center rounded-full bg-[var(--color-primary-muted)] text-3xl font-bold text-[var(--color-primary)]"
+            <div className="px-4 pt-10 pb-6 flex flex-col items-center gap-3">
+              <span className="flex h-20 w-20 items-center justify-center rounded-full bg-[var(--color-primary-muted)] text-2xl font-bold text-[var(--color-primary)]"
                 style={{ boxShadow: '0 0 24px oklch(0.73 0.12 78 / 0.20)' }}>
                 {profile?.name?.slice(0, 2) ?? 'HI'}
               </span>
               <div className="text-center">
-                <p className="text-xl font-bold text-[var(--color-foreground)]">{profile?.name}</p>
+                <p className="text-lg font-bold text-[var(--color-foreground)]">{profile?.name}</p>
                 <span className={cn(
-                  'inline-block mt-1.5 rounded-[var(--radius-full)] px-3 py-0.5 text-xs font-semibold',
+                  'inline-block mt-1 rounded-[var(--radius-full)] px-3 py-0.5 text-xs font-semibold',
                   'bg-[var(--color-primary-muted)] text-[var(--color-primary)]'
                 )}>
                   {roleLabel[profile?.role] ?? profile?.role}
@@ -106,13 +106,16 @@ export default function ProfilePage() {
               ))}
             </div>
 
+            {/* スペーサー: ログアウトを下に押し下げる */}
+            <div className="flex-1" />
+
             {/* ログアウト */}
-            <div className="mt-6 px-4 pb-8">
+            <div className="px-4 pb-8 pt-4">
               <button
                 onClick={handleLogout}
                 className={cn(
                   'w-full flex items-center justify-center gap-2',
-                  'rounded-[var(--radius-xl)] py-4',
+                  'rounded-[var(--radius-xl)] py-3.5',
                   'bg-[var(--color-error-muted)] text-[var(--color-error-foreground)]',
                   'text-sm font-semibold',
                   'active:bg-[var(--color-error)]/20 transition-colors'
@@ -122,7 +125,7 @@ export default function ProfilePage() {
                 ログアウト
               </button>
             </div>
-          </>
+          </div>
         )}
       </div>
     </div>

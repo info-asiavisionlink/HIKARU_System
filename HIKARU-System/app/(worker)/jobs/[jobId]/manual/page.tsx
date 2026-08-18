@@ -162,16 +162,16 @@ export default function ManualPage() {
             <div className="h-8 w-8 rounded-full border-2 border-[var(--color-primary)] border-t-transparent animate-spin" />
           </div>
         ) : (
-          <>
+          <div className="flex flex-col" style={{ minHeight: '100%' }}>
             {/* AIチャットバナー */}
-            <Link href={`/jobs/${projectId}/chat`} className="block px-4 pt-5 pb-1">
+            <Link href={`/jobs/${projectId}/chat`} className="block px-4 pt-5 pb-4 shrink-0">
               <div className={cn(
                 'flex items-center gap-3 rounded-[var(--radius-xl)]',
                 'bg-gradient-to-r from-[var(--color-primary)] to-[oklch(0.45_0.22_280)]',
                 'px-4 py-4 shadow-[var(--shadow-md)]',
                 'active:scale-[0.98] transition-transform'
               )}>
-                <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/20 shrink-0">
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white/20 shrink-0">
                   <Sparkles className="h-5 w-5 text-white" />
                 </span>
                 <div>
@@ -182,8 +182,8 @@ export default function ManualPage() {
             </Link>
 
             {manuals.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-20 text-center px-6">
-                <BookOpen className="h-14 w-14 text-[var(--color-muted-foreground)] opacity-30 mb-4" />
+              <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-8">
+                <BookOpen className="h-12 w-12 text-[var(--color-muted-foreground)] opacity-30 mb-3" />
                 <p className="text-sm font-semibold text-[var(--color-foreground)]">マニュアルがありません</p>
                 <p className="mt-1.5 text-xs text-[var(--color-muted-foreground)] leading-relaxed">管理者がマニュアルを登録すると<br />ここに表示されます</p>
               </div>
@@ -224,7 +224,7 @@ export default function ManualPage() {
                 </div>
               </>
             )}
-          </>
+          </div>
         )}
       </div>
     </div>
