@@ -25,6 +25,7 @@ const typeConfig: Record<string, { icon: React.ElementType; color: string }> = {
 export default function NotificationsPage() {
   const [items, setItems] = React.useState<NotificationRow[]>([])
   const [loading, setLoading] = React.useState(true)
+  const scrollRef = React.useRef<HTMLDivElement>(null)
 
   React.useEffect(() => {
     async function load() {
@@ -55,14 +56,24 @@ export default function NotificationsPage() {
     load()
   }, [])
 
+  // ローディング完了後にスクロールを先頭にリセット（Chromeのscroll anchoring対策）
+  React.useEffect(() => {
+    if (!loading && scrollRef.current) {
+      scrollRef.current.scrollTop = 0
+    }
+  }, [loading])
+
   return (
     <div className="bg-[var(--color-background)]" style={{ height: 'calc(100dvh - var(--header-height))' }}>
       <WorkerHeader title="通知" showBack />
 
-      {/* height を明示指定してコンテンツをWorkerHeader下のみでスクロールさせる */}
       <div
+        ref={scrollRef}
         className="overflow-y-auto"
-        style={{ height: 'calc(100dvh - calc(var(--header-height) * 2))' }}
+        style={{
+          height: 'calc(100dvh - calc(var(--header-height) * 2))',
+          overflowAnchor: 'none',
+        }}
       >
         {loading ? (
           <div className="flex justify-center py-16">

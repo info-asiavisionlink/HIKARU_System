@@ -101,6 +101,7 @@ export default function ManualPage() {
   const [manuals, setManuals]       = React.useState<Manual[]>([])
   const [loading, setLoading]       = React.useState(true)
   const [filter, setFilter]         = React.useState<ManualType | 'all'>('all')
+  const scrollRef = React.useRef<HTMLDivElement>(null)
 
   React.useEffect(() => {
     async function load() {
@@ -121,6 +122,13 @@ export default function ManualPage() {
     }
     load()
   }, [projectId])
+
+  // ローディング完了後にスクロールを先頭にリセット（Chromeのscroll anchoring対策）
+  React.useEffect(() => {
+    if (!loading && scrollRef.current) {
+      scrollRef.current.scrollTop = 0
+    }
+  }, [loading])
 
   const types    = React.useMemo(() => Array.from(new Set(manuals.map((m) => m.type))), [manuals])
   const filtered = filter === 'all' ? manuals : manuals.filter((m) => m.type === filter)
@@ -144,7 +152,11 @@ export default function ManualPage() {
       />
 
       {/* height を明示指定してコンテンツをWorkerHeader下のみでスクロールさせる */}
-      <div className="overflow-y-auto" style={{ height: 'calc(100dvh - calc(var(--header-height) * 2))' }}>
+      <div
+        ref={scrollRef}
+        className="overflow-y-auto"
+        style={{ height: 'calc(100dvh - calc(var(--header-height) * 2))', overflowAnchor: 'none' }}
+      >
         {loading ? (
           <div className="flex justify-center py-16">
             <div className="h-8 w-8 rounded-full border-2 border-[var(--color-primary)] border-t-transparent animate-spin" />

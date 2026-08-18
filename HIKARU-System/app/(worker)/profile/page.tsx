@@ -17,6 +17,7 @@ export default function ProfilePage() {
   const router = useRouter()
   const [profile, setProfile] = React.useState<any>(null)
   const [loading, setLoading] = React.useState(true)
+  const scrollRef = React.useRef<HTMLDivElement>(null)
 
   React.useEffect(() => {
     async function load() {
@@ -41,6 +42,13 @@ export default function ProfilePage() {
     load()
   }, [router])
 
+  // ローディング完了後にスクロールを先頭にリセット（Chromeのscroll anchoring対策）
+  React.useEffect(() => {
+    if (!loading && scrollRef.current) {
+      scrollRef.current.scrollTop = 0
+    }
+  }, [loading])
+
   async function handleLogout() {
     await signOut()
     router.replace('/login')
@@ -50,10 +58,13 @@ export default function ProfilePage() {
     <div className="bg-[var(--color-background)]" style={{ height: 'calc(100dvh - var(--header-height))' }}>
       <WorkerHeader title="プロフィール" />
 
-      {/* height を明示指定してコンテンツをWorkerHeader下のみでスクロールさせる */}
       <div
+        ref={scrollRef}
         className="overflow-y-auto"
-        style={{ height: 'calc(100dvh - calc(var(--header-height) * 2))' }}
+        style={{
+          height: 'calc(100dvh - calc(var(--header-height) * 2))',
+          overflowAnchor: 'none',
+        }}
       >
         {loading ? (
           <div className="flex justify-center py-16">
