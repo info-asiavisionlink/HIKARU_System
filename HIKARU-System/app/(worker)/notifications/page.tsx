@@ -56,7 +56,7 @@ export default function NotificationsPage() {
   }, [])
 
   return (
-    <div className="min-h-dvh bg-[var(--color-background)]">
+    <div className="min-h-[calc(100dvh_-_var(--header-height))] bg-[var(--color-background)]">
       <WorkerHeader title="通知" showBack />
 
       {loading ? (
@@ -69,7 +69,7 @@ export default function NotificationsPage() {
           <p className="text-sm font-medium text-[var(--color-foreground)]">通知はありません</p>
         </div>
       ) : (
-        <div className="divide-y divide-[var(--color-border)]">
+        <div className="divide-y divide-[var(--color-border)] pt-px">
           {items.map((n) => {
             const { icon: Icon, color } = typeConfig[n.type] ?? typeConfig.info
             return (

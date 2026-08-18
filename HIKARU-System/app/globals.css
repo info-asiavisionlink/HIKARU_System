@@ -152,6 +152,8 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     color-scheme: dark;
+    /* sticky WorkerHeader の高さ分を加算してスクロール復元時に先頭コンテンツが隠れないようにする */
+    scroll-padding-top: calc(var(--header-height) * 2);
   }
 
   body {

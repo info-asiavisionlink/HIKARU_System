@@ -150,7 +150,7 @@ export default function ManualPage() {
       ) : (
         <>
           {/* AIチャットバナー */}
-          <Link href={`/jobs/${projectId}/chat`} className="block px-4 pt-4">
+          <Link href={`/jobs/${projectId}/chat`} className="block px-4 pt-6">
             <div className={cn(
               'flex items-center gap-3 rounded-[var(--radius-xl)]',
               'bg-gradient-to-r from-[var(--color-primary)] to-[oklch(0.45_0.22_280)]',

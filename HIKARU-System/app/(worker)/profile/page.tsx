@@ -48,7 +48,7 @@ export default function ProfilePage() {
 
   if (loading) {
     return (
-      <div className="min-h-dvh bg-[var(--color-background)]">
+      <div className="min-h-[calc(100dvh_-_var(--header-height))] bg-[var(--color-background)]">
         <WorkerHeader title="プロフィール" />
         <div className="flex justify-center py-16">
           <div className="h-8 w-8 rounded-full border-2 border-[var(--color-primary)] border-t-transparent animate-spin" />
@@ -58,7 +58,7 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="min-h-dvh bg-[var(--color-background)]">
+    <div className="min-h-[calc(100dvh_-_var(--header-height))] bg-[var(--color-background)]">
       <WorkerHeader title="プロフィール" />
 
       {/* アバター */}
