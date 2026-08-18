@@ -47,11 +47,14 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100dvh_-_var(--header-height))] bg-[var(--color-background)]">
+    <div className="bg-[var(--color-background)]" style={{ height: 'calc(100dvh - var(--header-height))' }}>
       <WorkerHeader title="プロフィール" />
 
-      {/* WorkerHeaderの下でのみスクロールし、コンテンツがHeaderの裏に入らないよう分離 */}
-      <div className="flex-1 min-h-0 overflow-y-auto">
+      {/* height を明示指定してコンテンツをWorkerHeader下のみでスクロールさせる */}
+      <div
+        className="overflow-y-auto"
+        style={{ height: 'calc(100dvh - calc(var(--header-height) * 2))' }}
+      >
         {loading ? (
           <div className="flex justify-center py-16">
             <div className="h-8 w-8 rounded-full border-2 border-[var(--color-primary)] border-t-transparent animate-spin" />
