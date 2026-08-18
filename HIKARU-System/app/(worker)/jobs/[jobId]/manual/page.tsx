@@ -144,7 +144,7 @@ export default function ManualPage() {
       />
 
       {/* WorkerHeaderの下でのみスクロールし、コンテンツがHeaderの裏に入らないよう分離 */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         {loading ? (
           <div className="flex justify-center py-16">
             <div className="h-8 w-8 rounded-full border-2 border-[var(--color-primary)] border-t-transparent animate-spin" />
