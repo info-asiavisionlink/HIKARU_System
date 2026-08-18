@@ -80,38 +80,63 @@ export default function NotificationsPage() {
             <div className="h-8 w-8 rounded-full border-2 border-[var(--color-primary)] border-t-transparent animate-spin" />
           </div>
         ) : items.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-center">
-            <Bell className="h-12 w-12 text-[var(--color-muted-foreground)] opacity-40 mb-3" />
-            <p className="text-sm font-medium text-[var(--color-foreground)]">通知はありません</p>
+          <div className="flex flex-col items-center justify-center py-24 text-center px-6">
+            <Bell className="h-14 w-14 text-[var(--color-muted-foreground)] opacity-30 mb-4" />
+            <p className="text-sm font-semibold text-[var(--color-foreground)]">通知はありません</p>
+            <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">新しい通知が届くとここに表示されます</p>
           </div>
         ) : (
-          <div className="divide-y divide-[var(--color-border)]">
-            {items.map((n) => {
-              const { icon: Icon, color } = typeConfig[n.type] ?? typeConfig.info
-              return (
-                <div
-                  key={n.id}
-                  className={cn(
-                    'flex items-start gap-3 px-4 py-4',
-                    !n.is_read && 'bg-[var(--color-primary-muted)]'
-                  )}
-                >
-                  <Icon className={cn('h-5 w-5 mt-0.5 shrink-0', color)} />
-                  <div className="flex-1 min-w-0">
-                    <p className={cn('text-sm font-medium text-[var(--color-foreground)]', !n.is_read && 'font-semibold')}>
-                      {n.title}
-                    </p>
-                    {n.body && <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)]">{n.body}</p>}
-                    <p className="mt-1 text-[10px] text-[var(--color-subtle)]">
-                      {new Date(n.created_at).toLocaleString('ja-JP', {
-                        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-                      })}
-                    </p>
+          <div className="pb-8">
+            {(() => {
+              const groups: { label: string; items: NotificationRow[] }[] = []
+              for (const n of items) {
+                const d = new Date(n.created_at)
+                const today = new Date()
+                const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1)
+                const label =
+                  d.toDateString() === today.toDateString()     ? '今日' :
+                  d.toDateString() === yesterday.toDateString() ? '昨日' :
+                  d.toLocaleDateString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' })
+                const last = groups[groups.length - 1]
+                if (last?.label === label) last.items.push(n)
+                else groups.push({ label, items: [n] })
+              }
+              return groups.map(({ label, items: groupItems }) => (
+                <div key={label}>
+                  <div className="px-4 pt-5 pb-2">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-subtle)]">
+                      {label}
+                    </span>
                   </div>
-                  {!n.is_read && <span className="h-2 w-2 rounded-full bg-[var(--color-primary)] shrink-0 mt-1.5" />}
+                  <div className="mx-4 rounded-[var(--radius-xl)] overflow-hidden border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+                    {groupItems.map((n) => {
+                      const { icon: Icon, color } = typeConfig[n.type] ?? typeConfig.info
+                      return (
+                        <div
+                          key={n.id}
+                          className={cn(
+                            'flex items-start gap-3 px-4 py-4 bg-[var(--color-surface)]',
+                            !n.is_read && 'bg-[var(--color-primary-muted)]'
+                          )}
+                        >
+                          <Icon className={cn('h-5 w-5 mt-0.5 shrink-0', color)} />
+                          <div className="flex-1 min-w-0">
+                            <p className={cn('text-sm text-[var(--color-foreground)]', !n.is_read ? 'font-semibold' : 'font-medium')}>
+                              {n.title}
+                            </p>
+                            {n.body && <p className="mt-0.5 text-xs text-[var(--color-muted-foreground)] leading-relaxed">{n.body}</p>}
+                            <p className="mt-1.5 text-[10px] text-[var(--color-subtle)]">
+                              {new Date(n.created_at).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+                            </p>
+                          </div>
+                          {!n.is_read && <span className="h-2 w-2 rounded-full bg-[var(--color-primary)] shrink-0 mt-1.5" />}
+                        </div>
+                      )
+                    })}
+                  </div>
                 </div>
-              )
-            })}
+              ))
+            })()}
           </div>
         )}
       </div>

@@ -164,28 +164,28 @@ export default function ManualPage() {
         ) : (
           <>
             {/* AIチャットバナー */}
-            <Link href={`/jobs/${projectId}/chat`} className="block px-4 pt-6">
+            <Link href={`/jobs/${projectId}/chat`} className="block px-4 pt-5 pb-1">
               <div className={cn(
                 'flex items-center gap-3 rounded-[var(--radius-xl)]',
                 'bg-gradient-to-r from-[var(--color-primary)] to-[oklch(0.45_0.22_280)]',
-                'px-4 py-3.5 shadow-[var(--shadow-md)]',
+                'px-4 py-4 shadow-[var(--shadow-md)]',
                 'active:scale-[0.98] transition-transform'
               )}>
-                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white/20 shrink-0">
+                <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/20 shrink-0">
                   <Sparkles className="h-5 w-5 text-white" />
                 </span>
                 <div>
                   <p className="text-sm font-semibold text-white">AIアシスタントに質問する</p>
-                  <p className="text-xs text-white/75 mt-0.5">このマニュアルを参照して回答します</p>
+                  <p className="text-xs text-white/70 mt-0.5">このマニュアルを参照して回答します</p>
                 </div>
               </div>
             </Link>
 
             {manuals.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 text-center px-4">
-                <BookOpen className="h-12 w-12 text-[var(--color-muted-foreground)] opacity-40 mb-3" />
-                <p className="text-sm font-medium text-[var(--color-foreground)]">マニュアルがありません</p>
-                <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">管理者がマニュアルを登録すると表示されます</p>
+              <div className="flex flex-col items-center justify-center py-20 text-center px-6">
+                <BookOpen className="h-14 w-14 text-[var(--color-muted-foreground)] opacity-30 mb-4" />
+                <p className="text-sm font-semibold text-[var(--color-foreground)]">マニュアルがありません</p>
+                <p className="mt-1.5 text-xs text-[var(--color-muted-foreground)] leading-relaxed">管理者がマニュアルを登録すると<br />ここに表示されます</p>
               </div>
             ) : (
               <>
