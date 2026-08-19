@@ -428,7 +428,8 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     try {
       const ctx = getScreenContext(pathnameRef.current)
       const recentMessages = messagesRef.current.slice(-6).map(m => ({ role: m.role, content: m.text }))
-      const res = await fetch('/api/ai/intent', {
+      // Agent APIへ（多段Tool実行・自然会話対応）
+      const res = await fetch('/api/ai/agent', {
         method:      'POST',
         headers:     { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -443,7 +444,30 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
         }),
       })
       if (!res.ok) { finishWithError('音声アシスタントへの接続に失敗しました。'); return }
-      const result: IntentResult = await res.json()
+      const result = await res.json()
+
+      // AgentがToolで収集したリストをConversation Contextへ反映
+      if (result.resultData) {
+        conversationCtxRef.current = {
+          ...conversationCtxRef.current,
+          lastResultData: result.resultData,
+        }
+      }
+
+      // action=null + voiceReply → Agentが直接回答（データ取得済み）
+      if (!result.action && result.voiceReply) {
+        setResponse(result.voiceReply)
+        addMessage('assistant', result.voiceReply)
+        conversationCtxRef.current = {
+          ...conversationCtxRef.current,
+          lastIntent:  'agent.response',
+          lastAction:  undefined,
+        }
+        speakAndMaybeResume(result.voiceReply)
+        return
+      }
+
+      // action あり → 既存 executeAction（Nav / L1 fallback）
       await executeAction(result)
     } catch {
       finishWithError('音声アシスタントへの接続に失敗しました。')
