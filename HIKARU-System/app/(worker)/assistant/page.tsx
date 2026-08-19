@@ -4,7 +4,7 @@ import * as React from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import {
   Mic, MicOff, X, Activity, Clock, CheckCircle, Bell,
-  Home, Calendar, Zap, ChevronRight,
+  Home, Calendar, Zap, ChevronRight, Radio,
 } from 'lucide-react'
 import { HikaruCore } from '@/components/voice/HikaruCore'
 import { useVoiceAssistant } from '@/lib/voice/useVoiceAssistant'
@@ -145,8 +145,11 @@ function AssistantPageContent() {
   const router       = useRouter()
   const projectId    = searchParams.get('pid') ?? undefined
 
-  const { mode, errorMessage, messages, isSpeechSupported, startListening, stopAll, handleUtterance }
-    = useVoiceAssistant({ projectId })
+  const {
+    mode, errorMessage, messages, isSpeechSupported,
+    startListening, stopAll, handleUtterance,
+    isSession, startSession, stopSession,
+  } = useVoiceAssistant({ projectId })
 
   const memory   = useMemorySummary()
   const stateObj = STATE_TEXT[mode] ?? STATE_TEXT.idle
@@ -158,6 +161,11 @@ function AssistantPageContent() {
   const handleMicClick = () => {
     if (isActive || isProc) { stopAll(); return }
     startListening()
+  }
+
+  const handleSessionToggle = () => {
+    if (isSession) { stopSession(); return }
+    startSession()
   }
 
   const handleQuick = (utterance: string) => {
@@ -218,8 +226,8 @@ function AssistantPageContent() {
       {/* 話す button */}
       <button
         onClick={handleMicClick}
-        disabled={isProc}
-        className="flex flex-col items-center gap-2 rounded-xl py-5 transition-all duration-200 active:scale-95 disabled:opacity-40 mt-auto"
+        disabled={isProc || isSession}
+        className="flex flex-col items-center gap-2 rounded-xl py-4 transition-all duration-200 active:scale-95 disabled:opacity-40"
         style={{
           background: isActive ? 'oklch(0.62 0.24 22 / 0.12)' : `${G}10`,
           border: `1px solid ${isActive ? 'oklch(0.62 0.24 22 / 0.6)' : `${G}44`}`,
@@ -230,11 +238,29 @@ function AssistantPageContent() {
           ? <MicOff className="h-6 w-6" style={{ color: 'oklch(0.78 0.24 22)' }} />
           : <Mic    className="h-6 w-6" style={{ color: GB }} />
         }
-        <span className="text-sm font-bold tracking-wide" style={{ color: isActive ? 'oklch(0.78 0.24 22)' : GB }}>
-          {isActive ? '停止' : '話す'}
+        <span className="text-xs font-bold tracking-wide" style={{ color: isActive ? 'oklch(0.78 0.24 22)' : GB }}>
+          {isActive ? '停止' : '1回話す'}
+        </span>
+      </button>
+
+      {/* Hands-Free Session button */}
+      <button
+        onClick={handleSessionToggle}
+        disabled={isProc}
+        className="flex flex-col items-center gap-2 rounded-xl py-4 transition-all duration-200 active:scale-95 disabled:opacity-40 mt-auto"
+        style={{
+          background: isSession ? `${G}20` : `${G}08`,
+          border: `1px solid ${isSession ? G : `${G}30`}`,
+          boxShadow: isSession ? `0 0 16px ${G}40` : 'none',
+        }}
+        aria-label={isSession ? '会話終了' : 'ハンズフリー会話開始'}
+      >
+        <Radio className="h-6 w-6" style={{ color: isSession ? GB : GD }} />
+        <span className="text-xs font-bold" style={{ color: isSession ? GB : GD }}>
+          {isSession ? '会話中' : 'ハンズフリー'}
         </span>
         <span className="text-[9px]" style={{ color: GD }}>
-          {isActive ? '終了するにはもう一度タップ' : 'タップして話す'}
+          {isSession ? '「終了」で停止' : '自動で聞き続ける'}
         </span>
       </button>
     </aside>
@@ -323,13 +349,23 @@ function AssistantPageContent() {
 
         {/* Right: mode badge, wave, close */}
         <div className="flex items-center gap-3">
-          <div
-            className="hidden sm:flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-bold tracking-[0.15em] uppercase"
-            style={{ background: `${G}16`, border: `1px solid ${G}38`, color: GB }}
-          >
-            <div className="h-1.5 w-1.5 rounded-full" style={{ background: GB }} />
-            {VOICE_ASSISTANT_NAME}モード
-          </div>
+          {isSession ? (
+            <div
+              className="hidden sm:flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-bold tracking-[0.15em] uppercase"
+              style={{ background: `${G}28`, border: `1px solid ${G}`, color: GB, boxShadow: `0 0 12px ${G}50` }}
+            >
+              <div className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: '#4ade80' }} />
+              会話中
+            </div>
+          ) : (
+            <div
+              className="hidden sm:flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-bold tracking-[0.15em] uppercase"
+              style={{ background: `${G}16`, border: `1px solid ${G}38`, color: GB }}
+            >
+              <div className="h-1.5 w-1.5 rounded-full" style={{ background: GB }} />
+              {VOICE_ASSISTANT_NAME}モード
+            </div>
+          )}
           <VoiceWave active={isActive || isSpeak} />
           <button
             onClick={() => router.push('/home')}
@@ -399,19 +435,17 @@ function AssistantPageContent() {
             </div>
           )}
 
-          {/* Mobile: mic button */}
-          <div className="md:hidden flex flex-col items-center gap-2 mt-2">
+          {/* Mobile: mic + session buttons */}
+          <div className="md:hidden flex flex-col items-center gap-3 mt-2">
             <button
               onClick={handleMicClick}
-              disabled={isProc}
+              disabled={isProc || isSession}
               className="flex h-20 w-20 items-center justify-center rounded-full transition-all duration-200 active:scale-90 disabled:opacity-40"
               style={{
                 background: isActive
                   ? 'oklch(0.62 0.24 22)'
                   : `linear-gradient(135deg, ${G}, ${GB})`,
-                boxShadow: isActive
-                  ? '0 0 30px oklch(0.62 0.24 22 / 0.5)'
-                  : `0 0 30px ${G}55`,
+                boxShadow: isActive ? '0 0 30px oklch(0.62 0.24 22 / 0.5)' : `0 0 30px ${G}55`,
               }}
               aria-label={isActive ? '停止' : `${VOICE_ASSISTANT_NAME}に話す`}
             >
@@ -421,8 +455,22 @@ function AssistantPageContent() {
               }
             </button>
             <span className="text-xs" style={{ color: GD }}>
-              {isActive ? '停止するにはタップ' : 'タップして話す'}
+              {isActive ? '停止するにはタップ' : '1回話す'}
             </span>
+            <button
+              onClick={handleSessionToggle}
+              disabled={isProc}
+              className="flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-bold transition-all active:scale-95 disabled:opacity-40"
+              style={{
+                background: isSession ? `${G}20` : `${G}10`,
+                border: `1px solid ${isSession ? G : `${G}30`}`,
+                color: isSession ? GB : GD,
+                boxShadow: isSession ? `0 0 14px ${G}40` : 'none',
+              }}
+            >
+              <Radio className="h-4 w-4" />
+              {isSession ? '会話終了' : 'ハンズフリー開始'}
+            </button>
           </div>
 
           {/* Mobile: quick commands */}

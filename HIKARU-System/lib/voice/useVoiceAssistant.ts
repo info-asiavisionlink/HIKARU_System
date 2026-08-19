@@ -130,6 +130,11 @@ function executeL2Navigation(
     case 'system.go_back':            router.back();                                    return '前の画面に戻ります'
     case 'system.open_notifications': router.push('/notifications');                    return '通知画面を開きます'
     case 'system.open_schedule':      router.push('/schedule');                         return 'スケジュールを開きます'
+    case 'system.open_shifts':        router.push('/shifts');                           return 'シフト管理画面を開きます'
+    case 'system.open_attendance':    router.push('/attendance');                       return '勤怠管理画面を開きます'
+    case 'system.open_expenses':      router.push('/expenses');                         return '経費申請画面を開きます'
+    case 'system.open_profile':       router.push('/profile');                          return 'プロフィール画面を開きます'
+    case 'system.open_jobs_list':     router.push('/jobs');                             return '案件一覧を開きます'
     case 'system.open_job':
       if (!projectId) return '案件が特定できません。案件一覧から選んでください。'
       router.push(`/jobs/${projectId}`);                                                return '案件画面を開きます'
@@ -149,6 +154,9 @@ function executeL2Navigation(
     case 'system.open_evaluation':
       if (!projectId) return 'AI評価には案件の画面を開いてください。'
       router.push(`/jobs/${projectId}/evaluation`);                                     return 'AI品質評価画面を開きます'
+    case 'system.open_report':
+      if (!projectId) return '報告書を開くには案件の画面を開いてください。'
+      router.push(`/jobs/${projectId}/report`);                                         return '報告書画面を開きます'
     default:
       return ''
   }
@@ -168,38 +176,108 @@ export interface UseVoiceAssistantReturn {
   isSpeechSupported: boolean
   startListening:    () => void
   stopAll:           () => void
-  /** クイックコマンド等から直接発話テキストを処理する */
   handleUtterance:   (utterance: string) => Promise<void>
+  /** Hands-Free Session */
+  isSession:         boolean
+  startSession:      () => void
+  stopSession:       () => void
 }
+
+// セッション終了ワード
+const SESSION_STOP_RE = /^(終了|やめて|止めて|ストップ|セッション終了|会話終了|閉じて|おしまい|終わり)$/
+// セッション無音タイムアウト (ms)
+const SILENCE_TIMEOUT_MS = 28_000
 
 export function useVoiceAssistant({ projectId }: UseVoiceAssistantOptions = {}): UseVoiceAssistantReturn {
   const router   = useRouter()
   const pathname = usePathname()
 
-  const [mode,         setMode]         = React.useState<VoiceMode>('idle')
-  const [transcript,   setTranscript]   = React.useState('')
-  const [response,     setResponse]     = React.useState('')
+  const [mode,         setMode]      = React.useState<VoiceMode>('idle')
+  const [transcript,   setTranscript]  = React.useState('')
+  const [response,     setResponse]    = React.useState('')
   const [errorMessage, setErrorMessage] = React.useState('')
-  const [messages,     setMessages]     = React.useState<VoiceChatMessage[]>([])
-  const recognitionRef = React.useRef<SpeechRecognitionInstance | null>(null)
+  const [messages,     setMessages]    = React.useState<VoiceChatMessage[]>([])
+  const [isSession,    setIsSession]   = React.useState(false)
+
+  const recognitionRef   = React.useRef<SpeechRecognitionInstance | null>(null)
+  const modeRef          = React.useRef<VoiceMode>('idle')
+  const isSessionRef     = React.useRef(false)
+  const silenceTimerRef  = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const startListeningRef = React.useRef<() => void>(() => {})
+
+  const setModeSync = React.useCallback((m: VoiceMode) => {
+    modeRef.current = m
+    setMode(m)
+  }, [])
 
   const isSpeechSupported = React.useMemo(() => {
     if (typeof window === 'undefined') return false
     return 'SpeechRecognition' in window || 'webkitSpeechRecognition' in window
   }, [])
 
-  const stopAll = React.useCallback(() => {
-    recognitionRef.current?.abort()
-    browserTTS.stop()
-    setMode('idle')
-    setErrorMessage('')
+  const clearSilenceTimer = React.useCallback(() => {
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current)
   }, [])
 
+  const scheduleSilenceTimeout = React.useCallback(() => {
+    clearSilenceTimer()
+    silenceTimerRef.current = setTimeout(() => {
+      if (!isSessionRef.current) return
+      isSessionRef.current = false
+      setIsSession(false)
+      browserTTS.stop()
+      modeRef.current = 'idle'
+      setMode('idle')
+    }, SILENCE_TIMEOUT_MS)
+  }, [clearSilenceTimer])
+
+  // TTS再生 + セッション中は完了後に自動再リスニング
+  const speakAndMaybeResume = React.useCallback((text: string) => {
+    clearSilenceTimer()
+    modeRef.current = 'speaking'
+    setMode('speaking')
+    browserTTS.speak(text, () => {
+      if (isSessionRef.current) {
+        setTimeout(() => { if (isSessionRef.current) startListeningRef.current() }, 400)
+      } else {
+        modeRef.current = 'idle'
+        setMode('idle')
+      }
+    })
+  }, [clearSilenceTimer])
+
+  const stopAll = React.useCallback(() => {
+    clearSilenceTimer()
+    isSessionRef.current = false
+    setIsSession(false)
+    recognitionRef.current?.abort()
+    browserTTS.stop()
+    setModeSync('idle')
+    setErrorMessage('')
+  }, [clearSilenceTimer, setModeSync])
+
+  const stopSession = React.useCallback(() => {
+    isSessionRef.current = false
+    setIsSession(false)
+    clearSilenceTimer()
+    recognitionRef.current?.abort()
+    browserTTS.stop()
+    setModeSync('idle')
+    setErrorMessage('')
+  }, [clearSilenceTimer, setModeSync])
+
   const finishWithError = React.useCallback((msg: string) => {
+    clearSilenceTimer()
     setErrorMessage(msg)
-    setMode('error')
-    setTimeout(() => { setMode('idle'); setErrorMessage('') }, 3500)
-  }, [])
+    setModeSync('error')
+    setTimeout(() => {
+      setModeSync('idle')
+      setErrorMessage('')
+      if (isSessionRef.current) {
+        setTimeout(() => { if (isSessionRef.current) startListeningRef.current() }, 800)
+      }
+    }, 3500)
+  }, [clearSilenceTimer, setModeSync])
 
   const addMessage = React.useCallback((role: 'user' | 'assistant', text: string) => {
     setMessages(prev => [...prev.slice(-4), { role, text, timestamp: Date.now() }])
@@ -212,9 +290,7 @@ export function useVoiceAssistant({ projectId }: UseVoiceAssistantOptions = {}):
       const msg = '発話の意図を理解できませんでした。もう一度お話しください。'
       setResponse(msg)
       addMessage('assistant', msg)
-      setMode('speaking')
-      browserTTS.speak(msg)
-      setTimeout(() => setMode('idle'), 3000)
+      speakAndMaybeResume(msg)
       return
     }
 
@@ -229,9 +305,7 @@ export function useVoiceAssistant({ projectId }: UseVoiceAssistantOptions = {}):
       const reply    = voiceReply ?? navReply
       setResponse(reply)
       addMessage('assistant', reply)
-      setMode('speaking')
-      browserTTS.speak(reply)
-      setTimeout(() => setMode('idle'), 2500)
+      speakAndMaybeResume(reply)
       return
     }
 
@@ -240,24 +314,31 @@ export function useVoiceAssistant({ projectId }: UseVoiceAssistantOptions = {}):
     const reply = voiceReply ?? l1Summary
     setResponse(reply)
     addMessage('assistant', reply)
-    setMode('speaking')
-    browserTTS.speak(reply)
-    setTimeout(() => setMode('idle'), Math.max(3000, reply.length * 120))
-  }, [router, projectId, addMessage])
+    speakAndMaybeResume(reply)
+  }, [router, projectId, addMessage, speakAndMaybeResume])
 
   const handleUtterance = React.useCallback(async (utterance: string) => {
+    // セッション停止ワード
+    if (isSessionRef.current && SESSION_STOP_RE.test(utterance.trim())) {
+      addMessage('user', utterance)
+      addMessage('assistant', '会話を終了します')
+      isSessionRef.current = false
+      setIsSession(false)
+      clearSilenceTimer()
+      speakAndMaybeResume('会話を終了します')
+      return
+    }
+
     setTranscript(utterance)
     addMessage('user', utterance)
-    setMode('processing')
+    setModeSync('processing')
 
-    // ローカルIntent（高速）
     const localResult = resolveLocalIntent(utterance)
     if (localResult?.action && localResult.confidence >= 0.6) {
       await executeAction(localResult)
       return
     }
 
-    // gpt-4o-mini Intent
     try {
       const ctx = getScreenContext(pathname)
       const res = await fetch('/api/ai/intent', {
@@ -277,16 +358,18 @@ export function useVoiceAssistant({ projectId }: UseVoiceAssistantOptions = {}):
     } catch {
       finishWithError('音声アシスタントへの接続に失敗しました。')
     }
-  }, [pathname, projectId, executeAction, finishWithError])
+  }, [pathname, projectId, executeAction, finishWithError, addMessage, speakAndMaybeResume, clearSilenceTimer, setModeSync])
 
   const startListening = React.useCallback(() => {
     if (!isSpeechSupported) { finishWithError('このブラウザでは音声入力を利用できません。'); return }
-    if (mode === 'speaking') { browserTTS.stop(); setMode('idle'); return }
-    if (mode === 'processing') return
+    if (modeRef.current === 'speaking') { browserTTS.stop(); setModeSync('idle'); return }
+    if (modeRef.current === 'processing') return
 
     setErrorMessage('')
     setTranscript('')
-    setMode('listening')
+    setModeSync('listening')
+
+    if (isSessionRef.current) scheduleSilenceTimeout()
 
     const SpeechRec = ((window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition) as new () => SpeechRecognitionInstance
     const rec = new SpeechRec()
@@ -294,23 +377,54 @@ export function useVoiceAssistant({ projectId }: UseVoiceAssistantOptions = {}):
     recognitionRef.current = rec
 
     rec.onresult = (e: SpeechRecognitionEvent) => {
+      clearSilenceTimer()
       const text = e.results[0]?.[0]?.transcript ?? ''
       if (!text.trim()) { finishWithError('音声を認識できませんでした。'); return }
       handleUtterance(text.trim())
     }
     rec.onerror = (e: SpeechRecognitionErrorEvent) => {
+      clearSilenceTimer()
       if (e.error === 'not-allowed' || e.error === 'permission-denied') {
         finishWithError('マイクの使用を許可してください。')
       } else if (e.error === 'no-speech') {
-        finishWithError('音声が検出されませんでした。')
+        if (isSessionRef.current) {
+          setModeSync('idle')
+          setTimeout(() => { if (isSessionRef.current) startListeningRef.current() }, 300)
+        } else {
+          finishWithError('音声が検出されませんでした。')
+        }
       } else {
         finishWithError('音声認識でエラーが発生しました。')
       }
     }
-    rec.onend = () => { if (mode === 'listening') setMode('idle') }
+    rec.onend = () => {
+      if (modeRef.current === 'listening') {
+        if (isSessionRef.current) {
+          setModeSync('idle')
+          setTimeout(() => { if (isSessionRef.current) startListeningRef.current() }, 300)
+        } else {
+          setModeSync('idle')
+        }
+      }
+    }
 
     try { rec.start() } catch { finishWithError('マイクを起動できませんでした。') }
-  }, [isSpeechSupported, mode, handleUtterance, finishWithError])
+  }, [isSpeechSupported, handleUtterance, finishWithError, setModeSync, scheduleSilenceTimeout, clearSilenceTimer])
 
-  return { mode, transcript, response, errorMessage, messages, isSpeechSupported, startListening, stopAll, handleUtterance }
+  React.useEffect(() => {
+    startListeningRef.current = startListening
+  }, [startListening])
+
+  const startSession = React.useCallback(() => {
+    if (!isSpeechSupported) { finishWithError('このブラウザでは音声入力を利用できません。'); return }
+    isSessionRef.current = true
+    setIsSession(true)
+    startListeningRef.current()
+  }, [isSpeechSupported, finishWithError])
+
+  return {
+    mode, transcript, response, errorMessage, messages,
+    isSpeechSupported, startListening, stopAll, handleUtterance,
+    isSession, startSession, stopSession,
+  }
 }

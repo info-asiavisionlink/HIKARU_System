@@ -95,6 +95,30 @@ export const SYSTEM_ACTIONS = {
     level: 2 as const,
     description: 'スケジュール・予定カレンダーを開く',
   },
+  'system.open_shifts': {
+    level: 2 as const,
+    description: 'シフト管理・勤務シフト一覧を開く',
+  },
+  'system.open_attendance': {
+    level: 2 as const,
+    description: '勤怠管理・出退勤記録画面を開く',
+  },
+  'system.open_expenses': {
+    level: 2 as const,
+    description: '経費申請・経費一覧画面を開く',
+  },
+  'system.open_profile': {
+    level: 2 as const,
+    description: 'プロフィール・自分の情報画面を開く',
+  },
+  'system.open_report': {
+    level: 2 as const,
+    description: '報告書・作業報告画面を開く',
+  },
+  'system.open_jobs_list': {
+    level: 2 as const,
+    description: '案件一覧・担当案件リストを開く',
+  },
 } as const
 
 export type SystemActionName = keyof typeof SYSTEM_ACTIONS

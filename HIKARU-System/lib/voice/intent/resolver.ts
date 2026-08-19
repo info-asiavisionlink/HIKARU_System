@@ -69,6 +69,36 @@ const LOCAL_RULES: LocalRule[] = [
     action:     'system.get_today_jobs',
     voiceReply: '今日の作業を確認します',
   },
+  {
+    patterns:   [/^シフト(管理|を開いて|一覧)?$/, /^シフト確認/, /^勤務シフト/],
+    action:     'system.open_shifts',
+    voiceReply: 'シフト管理画面を開きます',
+  },
+  {
+    patterns:   [/^勤怠(管理|を開いて|確認)?$/, /^出退勤/, /^勤怠記録/],
+    action:     'system.open_attendance',
+    voiceReply: '勤怠管理画面を開きます',
+  },
+  {
+    patterns:   [/^経費(申請|一覧|を開いて)?$/, /^経費確認/, /^立替/],
+    action:     'system.open_expenses',
+    voiceReply: '経費申請画面を開きます',
+  },
+  {
+    patterns:   [/^プロフィール$/, /^自分の情報/, /^プロフィールを開いて/],
+    action:     'system.open_profile',
+    voiceReply: 'プロフィール画面を開きます',
+  },
+  {
+    patterns:   [/^報告書$/, /^作業報告/, /^報告書を開いて/, /^レポート$/],
+    action:     'system.open_report',
+    voiceReply: '報告書画面を開きます',
+  },
+  {
+    patterns:   [/^案件一覧$/, /^案件リスト/, /^担当案件/, /^案件(を)?見せて/],
+    action:     'system.open_jobs_list',
+    voiceReply: '案件一覧を開きます',
+  },
 ]
 
 /**
