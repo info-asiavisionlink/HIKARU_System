@@ -5,10 +5,11 @@ import OpenAI from 'openai'
 // モデル変更はここだけ修正する
 // ============================================================
 export const OPENAI_MODELS = {
-  CHAT: 'gpt-4o',
-  VISION: 'gpt-4o',
-  REPORT: 'gpt-4o',
+  CHAT:    'gpt-4o',
+  VISION:  'gpt-4o',
+  REPORT:  'gpt-4o',
   ANALYZE: 'gpt-4o',
+  MINI:    'gpt-4o-mini', // Voice Intent解析用（低コスト・低レイテンシ）
 } as const
 
 export type OpenAIModelKey = keyof typeof OPENAI_MODELS

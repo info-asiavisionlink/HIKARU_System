@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter, useParams } from 'next/navigation'
 import { completeJob } from '@/services/jobs.service'
 import { WorkerHeader } from '@/components/layouts/WorkerHeader'
+import { VoiceButton } from '@/components/voice/VoiceButton'
 import { WorkProgress, SpotStatusDot } from '@/components/worker/WorkProgress'
 import { cn } from '@hikaru/ui'
 import {
@@ -408,6 +409,7 @@ export default function JobDetailPage() {
           </button>
         </div>
       )}
+      <VoiceButton projectId={projectId} />
     </div>
   )
 }

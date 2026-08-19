@@ -3,6 +3,7 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { VoiceButton } from '@/components/voice/VoiceButton'
 import {
   Briefcase, CheckCircle2, Clock, ChevronRight,
   Bell, PlayCircle, Activity,
@@ -329,6 +330,7 @@ export default function HomePage() {
           </div>
         </section>
       </div>
+      <VoiceButton />
     </div>
   )
 }
