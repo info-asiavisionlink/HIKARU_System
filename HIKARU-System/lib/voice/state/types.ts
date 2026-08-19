@@ -58,9 +58,15 @@ export interface LastResultData {
 }
 
 export interface ConversationContext {
-  lastIntent?:     string
-  lastAction?:     string
-  lastResultData?: LastResultData
+  lastIntent?:          string
+  lastAction?:          string
+  lastResultData?:      LastResultData
+  // Responses API / Agents SDK セッション継続用
+  previousResponseId?:  string
+  // Human-in-the-loop Foundation
+  pendingApproval?:     boolean
+  pendingAction?:       string
+  pendingActionParams?: Record<string, string>
 }
 
 // Voice設定（localStorage保存・Conversationは保存しない）

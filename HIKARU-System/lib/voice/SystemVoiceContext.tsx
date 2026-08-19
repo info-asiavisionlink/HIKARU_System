@@ -428,47 +428,87 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     try {
       const ctx = getScreenContext(pathnameRef.current)
       const recentMessages = messagesRef.current.slice(-6).map(m => ({ role: m.role, content: m.text }))
-      // Agent APIへ（多段Tool実行・自然会話対応）
-      const res = await fetch('/api/ai/agent', {
-        method:      'POST',
-        headers:     { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          utterance,
-          currentPath:       pathnameRef.current,
-          currentResourceId: projectIdRef.current ?? ctx.currentResourceId,
-          contextType:       ctx.contextType,
-          recentMessages,
-          lastIntent:        conversationCtxRef.current.lastIntent,
-          lastResultData:    conversationCtxRef.current.lastResultData,
-        }),
-      })
-      if (!res.ok) { finishWithError('音声アシスタントへの接続に失敗しました。'); return }
-      const result = await res.json()
 
-      // AgentがToolで収集したリストをConversation Contextへ反映
-      if (result.resultData) {
-        conversationCtxRef.current = {
-          ...conversationCtxRef.current,
-          lastResultData: result.resultData,
-        }
+      const requestBody = {
+        utterance,
+        currentPath:         pathnameRef.current,
+        currentResourceId:   projectIdRef.current ?? ctx.currentResourceId,
+        contextType:         ctx.contextType,
+        recentMessages,
+        lastIntent:          conversationCtxRef.current.lastIntent,
+        lastResultData:      conversationCtxRef.current.lastResultData,
+        previousResponseId:  conversationCtxRef.current.previousResponseId,
       }
 
-      // action=null + voiceReply → Agentが直接回答（データ取得済み）
-      if (!result.action && result.voiceReply) {
-        setResponse(result.voiceReply)
-        addMessage('assistant', result.voiceReply)
-        conversationCtxRef.current = {
-          ...conversationCtxRef.current,
-          lastIntent:  'agent.response',
-          lastAction:  undefined,
+      // SDK経路（Agents SDK + Responses API）を優先
+      // 失敗時は既存 /api/ai/agent へfallback
+      let result: Record<string, unknown> | null = null
+      let usedSdkRoute = false
+
+      try {
+        const sdkRes = await fetch('/api/ai/agent-sdk', {
+          method:      'POST',
+          headers:     { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body:        JSON.stringify(requestBody),
+        })
+        if (sdkRes.ok) {
+          result = await sdkRes.json()
+          usedSdkRoute = true
         }
-        speakAndMaybeResume(result.voiceReply)
+      } catch {}
+
+      if (!result || (result as any).error) {
+        // SDK失敗 → 既存Agentへfallback
+        const fallbackRes = await fetch('/api/ai/agent', {
+          method:      'POST',
+          headers:     { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body:        JSON.stringify(requestBody),
+        })
+        if (!fallbackRes.ok) { finishWithError('音声アシスタントへの接続に失敗しました。'); return }
+        result = await fallbackRes.json()
+        usedSdkRoute = false
+      }
+
+      if (!result) { finishWithError('音声アシスタントへの接続に失敗しました。'); return }
+
+      // Conversation Contextを更新
+      conversationCtxRef.current = {
+        ...conversationCtxRef.current,
+        ...(result.resultData ? { lastResultData: result.resultData as any } : {}),
+        ...(usedSdkRoute && result.previousResponseId
+          ? { previousResponseId: result.previousResponseId as string }
+          : {}),
+        ...(result.pendingApproval
+          ? { pendingApproval: true, pendingAction: result.action as string }
+          : { pendingApproval: false, pendingAction: undefined }),
+      }
+
+      // Human-in-the-loop: 承認が必要なActionは保留
+      if (result.pendingApproval) {
+        const confirmMsg = '承認が必要なActionがあります。続けてよろしいですか？'
+        setResponse(confirmMsg)
+        addMessage('assistant', confirmMsg)
+        speakAndMaybeResume(confirmMsg)
         return
       }
 
-      // action あり → 既存 executeAction（Nav / L1 fallback）
-      await executeAction(result)
+      // action=null + voiceReply → Agentが直接回答
+      if (!result.action && result.voiceReply) {
+        setResponse(result.voiceReply as string)
+        addMessage('assistant', result.voiceReply as string)
+        conversationCtxRef.current = {
+          ...conversationCtxRef.current,
+          lastIntent: 'agent.response',
+          lastAction: undefined,
+        }
+        speakAndMaybeResume(result.voiceReply as string)
+        return
+      }
+
+      // action あり → 既存 executeAction（Nav 実行）
+      await executeAction(result as any)
     } catch {
       finishWithError('音声アシスタントへの接続に失敗しました。')
     }
