@@ -3,23 +3,29 @@
 // サーバーサイドでは実行しない（typeof window チェック）
 // ============================================================
 
+import type { VoiceSettings } from '@/lib/voice/state/types'
+
 export class BrowserTTS {
-  /**
-   * @param onEnd - 読み上げ完了後のコールバック。
-   *   Chrome の TTS onend バグ対策として最大待機タイムアウトも設置。
-   */
-  speak(text: string, onEnd?: () => void): void {
+  speak(text: string, onEnd?: () => void, settings?: VoiceSettings): void {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
       onEnd?.()
       return
     }
-    // 前の読み上げを即座に停止してから開始（Barge-in基本対応）
     window.speechSynthesis.cancel()
     const utter   = new SpeechSynthesisUtterance(text)
     utter.lang    = 'ja-JP'
-    utter.rate    = 1.0
-    utter.pitch   = 1.0
-    utter.volume  = 1.0
+    utter.rate    = settings?.rate   ?? 1.0
+    utter.pitch   = settings?.pitch  ?? 1.0
+    utter.volume  = settings?.volume ?? 1.0
+
+    const voices = window.speechSynthesis.getVoices()
+    if (settings?.voiceURI) {
+      const found = voices.find(v => v.voiceURI === settings.voiceURI)
+      if (found) utter.voice = found
+    } else {
+      const jpVoice = voices.find(v => v.lang.startsWith('ja'))
+      if (jpVoice) utter.voice = jpVoice
+    }
 
     if (onEnd) {
       let called = false
@@ -38,6 +44,11 @@ export class BrowserTTS {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel()
     }
+  }
+
+  getVoices(): SpeechSynthesisVoice[] {
+    if (typeof window === 'undefined') return []
+    return window.speechSynthesis.getVoices()
   }
 
   get isSpeaking(): boolean {

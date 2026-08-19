@@ -62,3 +62,11 @@ export interface ConversationContext {
   lastAction?:     string
   lastResultData?: LastResultData
 }
+
+// Voice設定（localStorage保存・Conversationは保存しない）
+export interface VoiceSettings {
+  voiceURI: string   // '' = browser default
+  rate:     number   // 0.5-2.0
+  pitch:    number   // 0-2.0
+  volume:   number   // 0-1.0
+}

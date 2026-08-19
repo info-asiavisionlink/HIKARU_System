@@ -1,9 +1,11 @@
 'use client'
 
 import * as React from 'react'
-import { WorkerSidebar } from './WorkerSidebar'
-import { WorkerTopBar } from './WorkerTopBar'
-import { Toaster } from '@hikaru/ui'
+import { WorkerSidebar }        from './WorkerSidebar'
+import { WorkerTopBar }         from './WorkerTopBar'
+import { Toaster }              from '@hikaru/ui'
+import { SystemVoiceProvider }  from '@/lib/voice/SystemVoiceContext'
+import { MiniVoicePanel }       from '@/components/voice/MiniVoicePanel'
 
 interface WorkerLayoutProps {
   children: React.ReactNode
@@ -14,7 +16,7 @@ export function WorkerLayout({ children }: WorkerLayoutProps) {
   const [mobileOpen, setMobileOpen] = React.useState(false)
 
   return (
-    <>
+    <SystemVoiceProvider>
       <WorkerSidebar
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
@@ -29,6 +31,8 @@ export function WorkerLayout({ children }: WorkerLayoutProps) {
         {children}
       </main>
 
+      <MiniVoicePanel />
+
       <Toaster
         position="top-center"
         richColors
@@ -39,7 +43,7 @@ export function WorkerLayout({ children }: WorkerLayoutProps) {
           },
         }}
       />
-    </>
+    </SystemVoiceProvider>
   )
 }
 
