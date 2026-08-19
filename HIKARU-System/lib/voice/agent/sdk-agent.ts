@@ -8,6 +8,8 @@ import { Agent, tool, setTracingDisabled } from '@openai/agents'
 import { z } from 'zod'
 import { isValidAction, getActionLevel } from '@/lib/voice/registry/system.actions'
 
+const CONFIRMATION_EXPIRY_MS = 5 * 60 * 1000
+
 // HIKARU業務データをOpenAIトレーシングプラットフォームへ送信しない
 setTracingDisabled(true)
 
@@ -203,6 +205,60 @@ const getExpensesTool = tool({
   },
 })
 
+// propose_action: L3/L4 Write操作をユーザーに確認提案する
+const proposeActionTool = tool({
+  name:        'propose_action',
+  description: 'L3/L4 Write操作（作業開始・完了・打刻・経費申請等）をユーザーに提案し確認を求める。実行はしない。propose_actionを呼んだ後、finalOutputに確認文を書くこと。',
+  parameters:  z.object({
+    action:              z.string().describe('system.start_job / system.complete_job / system.clock_in / system.clock_out / system.submit_expense / system.mark_notification_read 等'),
+    params:              z.record(z.string(), z.string()).optional().describe('actionに必要なパラメータ（jobId, projectId, expenseId, notificationId等）'),
+    confirmationMessage: z.string().describe('ユーザーへの確認文（例：「〇〇案件を完了にします。よろしいですか？」）'),
+  }),
+  execute: async ({ action, params = {}, confirmationMessage }) => {
+    if (!isValidAction(action)) return `不明なAction: ${action}。対応アクション: system.start_job, system.complete_job, system.clock_in, system.clock_out, system.submit_expense, system.mark_notification_read`
+    const level = getActionLevel(action)
+    if (level < 3) return `${action}はConfirmation不要です。`
+    if (level >= 5) return 'この操作は音声での実行が禁止されています。'
+    return JSON.stringify({
+      __pendingConfirmation: true,
+      action,
+      params,
+      safetyLevel: level,
+      message:     confirmationMessage,
+      expiresAt:   Date.now() + CONFIRMATION_EXPIRY_MS,
+    })
+  },
+})
+
+// get_quality_evaluation: AI品質評価を取得する
+const getQualityEvaluationTool = tool({
+  name:        'get_quality_evaluation',
+  description: '作業のAI品質評価スコア・フィードバックを取得する。jobIdが必要。',
+  parameters:  z.object({
+    jobId: z.string().optional().describe('作業Job ID（UUID）。省略時は現在のcontextから解決。'),
+  }),
+  execute: async ({ jobId }, runCtx) => {
+    const ctx = runCtx!.context as WorkerAgentContext
+    const jid = jobId || ctx.projectId
+    if (!jid) return '品質評価を確認するには作業画面を開いてください。'
+    try {
+      const res = await apiGet(`/api/ai/quality?jobId=${jid}`, ctx)
+      if (!res.ok) return '品質評価を取得できませんでした。'
+      const data = await res.json()
+      const score   = data?.score   ?? data?.data?.score
+      const reason  = data?.reason  ?? data?.data?.reason  ?? ''
+      const issues  = data?.issues  ?? data?.data?.issues
+      if (score == null) return '品質評価データがありません。AI評価画面から評価を実行してください。'
+      const issuesText = Array.isArray(issues) && issues.length > 0
+        ? `指摘: ${issues.slice(0, 2).join('、')}`
+        : ''
+      return `品質スコア: ${score}点。${reason}${issuesText ? '　' + issuesText : ''}`
+    } catch {
+      return '品質評価の取得中にエラーが発生しました。'
+    }
+  },
+})
+
 // navigate: L2アクション名を返してクライアントで実行
 const navigateTool = tool({
   name:        'navigate',
@@ -230,13 +286,34 @@ const SYSTEM_PROMPT = `あなたはHIKARU Workerアシスタント「JARVIS」�
 - マニュアル・手順書の情報提供
 - スケジュール・勤怠・経費のサマリー確認
 - 必要なページへのナビゲーション提案
+- 業務操作（作業開始・完了・打刻・経費申請）の安全な実行支援
 
 ## 重要なルール
 - Toolで取得した情報のみを事実として扱う（存在しないJobやManualを作らない）
 - Read-only Toolは必要に応じて連続使用可（最大5回）
 - ユーザーが「開いて」「確認して」と言った場合のみnavigateを実行する
 - 情報確認だけなら不要なnavigateをしない
-- Write操作（作業開始・完了・経費申請等）は現在対応していない
+
+## Write操作のルール（重要）
+Write操作（作業開始・完了・打刻・経費申請・通知既読）は必ずpropose_actionを使う。
+直接実行は禁止。必ずユーザーの確認を取ること。
+
+propose_action の使い方:
+1. まずRead Toolで必要なIDを取得する（例: get_today_jobs でprojectIdを確認）
+2. propose_actionを呼ぶ（action, params, confirmationMessage を指定）
+3. finalOutputに確認文を書く（例: 「〇〇の作業を完了にします。よろしいですか？」）
+4. ユーザーが「はい」と言ったら自動的にServerが実行する（Agentは何もしない）
+
+## propose_actionのactionとparamsの対応
+- system.start_job    → params: { projectId }  「〇〇の作業を開始します。よろしいですか？」
+- system.complete_job → params: { jobId }      「〇〇の作業を完了にします。よろしいですか？」
+- system.clock_in     → params: {}             「出勤を打刻します。よろしいですか？」
+- system.clock_out    → params: {}             「退勤を打刻します。よろしいですか？」
+- system.submit_expense → params: { expenseId } 「経費申請を提出します。よろしいですか？」
+- system.mark_notification_read → params: { notificationId } 「通知を既読にします。よろしいですか？」
+
+## L5禁止操作（音声実行不可）
+削除・権限変更・大量操作は実行不可。
 
 ## 返答スタイル（音声向け）
 - 結論から先に伝える（「今日は3件です」）
@@ -268,6 +345,8 @@ export const workerJarvisAgent = new Agent<WorkerAgentContext>({
     getScheduleTool,
     getAttendanceTool,
     getExpensesTool,
+    getQualityEvaluationTool,
+    proposeActionTool,
     navigateTool,
   ],
 })

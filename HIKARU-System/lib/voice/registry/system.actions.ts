@@ -119,6 +119,38 @@ export const SYSTEM_ACTIONS = {
     level: 2 as const,
     description: '案件一覧・担当案件リストを開く',
   },
+
+  // --------------------------------------------------------
+  // L3: Reversible Write（Confirmation必須）
+  // --------------------------------------------------------
+  'system.start_job': {
+    level: 3 as const,
+    description: '案件・作業を開始する',
+  },
+  'system.clock_in': {
+    level: 3 as const,
+    description: '勤怠打刻：出勤を記録する',
+  },
+  'system.clock_out': {
+    level: 3 as const,
+    description: '勤怠打刻：退勤を記録する',
+  },
+  'system.mark_notification_read': {
+    level: 3 as const,
+    description: '通知を既読にする',
+  },
+
+  // --------------------------------------------------------
+  // L4: Important Write（Confirmation必須・本人担当確認）
+  // --------------------------------------------------------
+  'system.complete_job': {
+    level: 4 as const,
+    description: '案件・作業を完了にする',
+  },
+  'system.submit_expense': {
+    level: 4 as const,
+    description: '経費申請を提出する',
+  },
 } as const
 
 export type SystemActionName = keyof typeof SYSTEM_ACTIONS
@@ -127,7 +159,7 @@ export function isValidAction(name: string): name is SystemActionName {
   return Object.prototype.hasOwnProperty.call(SYSTEM_ACTIONS, name)
 }
 
-export function getActionLevel(name: SystemActionName): 0 | 1 | 2 {
+export function getActionLevel(name: SystemActionName): 0 | 1 | 2 | 3 | 4 {
   return SYSTEM_ACTIONS[name].level
 }
 

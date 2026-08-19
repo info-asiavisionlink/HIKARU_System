@@ -11,7 +11,7 @@ import { browserTTS }            from '@/lib/voice/tts/browser'
 import { resolveLocalIntent }    from '@/lib/voice/intent/resolver'
 import { getScreenContext }      from '@/lib/voice/context/screen'
 import type {
-  VoiceMode, ConversationContext, LastResultData, VoiceSettings,
+  VoiceMode, ConversationContext, LastResultData, VoiceSettings, PendingConfirmation,
 } from '@/lib/voice/state/types'
 import type { SystemActionName } from '@/lib/voice/registry/system.actions'
 
@@ -45,6 +45,8 @@ export interface SystemVoiceChatMessage {
 
 // ─── セッション設定 ──────────────────────────────────────────
 const SESSION_STOP_RE    = /^(終了|やめて|止めて|ストップ|セッション終了|会話終了|閉じて|おしまい|終わり)$/
+const CONFIRM_YES_RE     = /^(はい|うん|ええ|そうです|お願い|お願いします|確認|実行|よろしく|よろしい|OK|オーケー|いいよ|いいです)$/i
+const CONFIRM_NO_RE      = /^(いいえ|やめて|キャンセル|やめる|いや|ノー|やっぱりやめ|やっぱり)$/i
 const STANDBY_MS         = 60_000       // 60s 無発話 → Standby表示
 const SESSION_TIMEOUT_MS = 5 * 60_000  // Standby後5分 → Session終了
 
@@ -400,6 +402,39 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     speakAndMaybeResume(reply)
   }, [router, addMessage, speakAndMaybeResume])
 
+  // ─── Confirmed Action 実行 ───────────────────────────────────
+  const executeConfirmedAction = React.useCallback(async (pending: PendingConfirmation) => {
+    setModeSync('processing')
+    try {
+      const res = await fetch('/api/ai/confirm-action', {
+        method:      'POST',
+        headers:     { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body:        JSON.stringify({
+          action:      pending.action,
+          params:      pending.params,
+          safetyLevel: pending.safetyLevel,
+          expiresAt:   pending.expiresAt,
+        }),
+      })
+      const data = await res.json()
+      const reply = res.ok
+        ? (data.voiceReply ?? '完了しました。')
+        : (data.error     ?? '実行に失敗しました。')
+      setResponse(reply)
+      addMessage('assistant', reply)
+      conversationCtxRef.current = {
+        ...conversationCtxRef.current,
+        lastIntent:          pending.action,
+        lastAction:          pending.action,
+        pendingConfirmation: undefined,
+      }
+      speakAndMaybeResume(reply)
+    } catch {
+      finishWithError('実行中にエラーが発生しました。')
+    }
+  }, [addMessage, speakAndMaybeResume, finishWithError, setModeSync])
+
   const handleUtterance = React.useCallback(async (utterance: string) => {
     // セッション停止ワード
     if (isSessionRef.current && SESSION_STOP_RE.test(utterance.trim())) {
@@ -411,6 +446,29 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
       setIsStandby(false)
       speakAndMaybeResume('会話を終了します')
       return
+    }
+
+    // ─── Confirmation 待ち中の「はい/いいえ」処理 ─────────────
+    const pending = conversationCtxRef.current.pendingConfirmation
+    if (pending) {
+      scheduleStandby()
+      setIsStandby(false)
+      setTranscript(utterance)
+      addMessage('user', utterance)
+      if (CONFIRM_YES_RE.test(utterance.trim())) {
+        await executeConfirmedAction(pending)
+        return
+      }
+      if (CONFIRM_NO_RE.test(utterance.trim())) {
+        conversationCtxRef.current = { ...conversationCtxRef.current, pendingConfirmation: undefined }
+        const msg = 'キャンセルしました。'
+        setResponse(msg)
+        addMessage('assistant', msg)
+        speakAndMaybeResume(msg)
+        return
+      }
+      // 別の発話 → pendingをクリアして通常処理
+      conversationCtxRef.current = { ...conversationCtxRef.current, pendingConfirmation: undefined }
     }
 
     scheduleStandby()
@@ -480,14 +538,14 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
         ...(usedSdkRoute && result.previousResponseId
           ? { previousResponseId: result.previousResponseId as string }
           : {}),
-        ...(result.pendingApproval
-          ? { pendingApproval: true, pendingAction: result.action as string }
-          : { pendingApproval: false, pendingAction: undefined }),
+        ...(result.pendingConfirmation
+          ? { pendingConfirmation: result.pendingConfirmation as PendingConfirmation }
+          : {}),
       }
 
-      // Human-in-the-loop: 承認が必要なActionは保留
-      if (result.pendingApproval) {
-        const confirmMsg = '承認が必要なActionがあります。続けてよろしいですか？'
+      // Stateless Confirmation: AgentがL3/L4操作を提案している
+      if (result.pendingConfirmation && result.voiceReply) {
+        const confirmMsg = result.voiceReply as string
         setResponse(confirmMsg)
         addMessage('assistant', confirmMsg)
         speakAndMaybeResume(confirmMsg)

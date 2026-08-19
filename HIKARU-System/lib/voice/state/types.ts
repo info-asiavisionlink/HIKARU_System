@@ -57,16 +57,27 @@ export interface LastResultData {
   summary?: string
 }
 
+export interface PendingConfirmation {
+  action:              string
+  params:              Record<string, string>
+  safetyLevel:         3 | 4 | 5
+  message:             string   // ユーザーへの確認文
+  resourceType?:       string
+  resourceId?:         string
+  expiresAt:           number   // Date.now() + expiry
+}
+
 export interface ConversationContext {
   lastIntent?:          string
   lastAction?:          string
   lastResultData?:      LastResultData
   // Responses API / Agents SDK セッション継続用
   previousResponseId?:  string
-  // Human-in-the-loop Foundation
+  // Human-in-the-loop: Stateless Confirmation
+  pendingConfirmation?: PendingConfirmation
+  // 旧 Foundation フラグ（後方互換）
   pendingApproval?:     boolean
   pendingAction?:       string
-  pendingActionParams?: Record<string, string>
 }
 
 // Voice設定（localStorage保存・Conversationは保存しない）

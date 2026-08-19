@@ -85,9 +85,10 @@ export async function POST(req: NextRequest) {
 
     const finalOutput = result.finalOutput ?? ''
 
-    // navigate tool 結果を検出
+    // tool 結果を検出（navigate / pendingConfirmation）
     let navigateAction: string | null = null
     let navigateProjectId: string | undefined
+    let pendingConfirmation: Record<string, unknown> | null = null
 
     for (const item of result.newItems ?? []) {
       if (item.type === 'tool_call_output_item') {
@@ -98,19 +99,31 @@ export async function POST(req: NextRequest) {
             navigateAction    = parsed.action
             navigateProjectId = parsed.projectId
           }
+          if (parsed.__pendingConfirmation) {
+            pendingConfirmation = {
+              action:      parsed.action,
+              params:      parsed.params ?? {},
+              safetyLevel: parsed.safetyLevel,
+              message:     parsed.message,
+              expiresAt:   parsed.expiresAt,
+            }
+          }
         } catch {}
       }
     }
 
-    const hasApprovalInterruption = (result.interruptions ?? []).length > 0
-
-    const response: AgentApiResponse & { pendingApproval?: boolean; previousResponseId?: string } = {
-      action:             navigateAction,
-      confidence:         navigateAction ? 1.0 : 0,
-      params:             navigateProjectId ? { projectId: navigateProjectId } : {},
-      voiceReply:         finalOutput || null,
-      pendingApproval:    hasApprovalInterruption,
-      previousResponseId: result.lastResponseId,
+    const response: AgentApiResponse & {
+      pendingApproval?:    boolean
+      pendingConfirmation?: Record<string, unknown>
+      previousResponseId?: string
+    } = {
+      action:              navigateAction,
+      confidence:          navigateAction ? 1.0 : 0,
+      params:              navigateProjectId ? { projectId: navigateProjectId } : {},
+      voiceReply:          finalOutput || null,
+      pendingApproval:     false,
+      pendingConfirmation: pendingConfirmation ?? undefined,
+      previousResponseId:  result.lastResponseId,
     }
 
     return Response.json(response)
