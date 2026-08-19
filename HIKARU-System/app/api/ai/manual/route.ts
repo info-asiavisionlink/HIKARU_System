@@ -1,9 +1,11 @@
 import { NextRequest } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import {
-  generateManualReplyStream,
+  generateScopedManualReplyStream,
   extractSources,
+  flattenScopedManuals,
   type ManualItem,
+  type ScopedManuals,
   type ChatMessage,
 } from '@/modules/manual-ai'
 import {
@@ -120,15 +122,41 @@ export async function POST(req: NextRequest) {
 
   ;(async () => {
     try {
-      // ---- マニュアル取得（project_id 絞り込み）----
-      // project.company_id = worker.company_id の確認はSSE外で完了済み
-      const { data: manuals } = await admin
-        .from('manuals')
-        .select('id, type, title, content, file_url')
-        .eq('project_id', projectId)
-        .order('order_num', { ascending: true })
+      // ---- Phase B: 3階層スコープ別マニュアル取得 ----
+      // company isolation は SSE外で完了済み (profile.company_id 確定)
+      const [
+        { data: projectManuals },
+        { data: companyManuals },
+        { data: globalManuals },
+      ] = await Promise.all([
+        // PROJECT: この案件専用
+        admin.from('manuals')
+          .select('id, type, title, content, file_url')
+          .eq('project_id', projectId)
+          .order('order_num', { ascending: true }),
 
-      const manualItems = (manuals ?? []) as ManualItem[]
+        // COMPANY: 同社テンプレート (is_template=true, project_idなし)
+        admin.from('manuals')
+          .select('id, type, title, content, file_url')
+          .eq('company_id', profile.company_id)
+          .eq('is_template', true)
+          .is('project_id', null)
+          .order('order_num', { ascending: true }),
+
+        // GLOBAL: HIKARU標準 (company_id=NULL, project_id=NULL)
+        admin.from('manuals')
+          .select('id, type, title, content, file_url')
+          .is('company_id', null)
+          .is('project_id', null)
+          .order('order_num', { ascending: true }),
+      ])
+
+      const scoped: ScopedManuals = {
+        project: (projectManuals ?? []) as ManualItem[],
+        company: (companyManuals ?? []) as ManualItem[],
+        global:  (globalManuals  ?? []) as ManualItem[],
+      }
+      const allManuals = flattenScopedManuals(scoped)
 
       // ---- ユーザーメッセージ保存 ----
       await admin.from('chat_messages').insert({
@@ -144,13 +172,13 @@ export async function POST(req: NextRequest) {
       let fullContent = ''
       await writer.write(send({ type: 'start' }))
 
-      for await (const chunk of generateManualReplyStream(message.trim(), chatHistory, manualItems)) {
+      for await (const chunk of generateScopedManualReplyStream(message.trim(), chatHistory, scoped)) {
         fullContent += chunk
         await writer.write(send({ type: 'chunk', content: chunk }))
       }
 
       // ---- 保存・完了 ----
-      const sources = extractSources(fullContent, manualItems)
+      const sources = extractSources(fullContent, allManuals)
 
       await admin.from('chat_messages').insert({
         project_id: projectId,
