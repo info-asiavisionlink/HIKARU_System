@@ -1,14 +1,14 @@
 import { NextRequest } from 'next/server'
 import { createOpenAIClient, OPENAI_MODELS } from '@/lib/openai/client'
 import { buildActionListForPrompt, isValidAction, getActionLevel } from '@/lib/voice/registry/system.actions'
-import { buildIntentSystemPrompt } from '@/lib/voice/intent/prompts'
+import { buildIntentSystemPrompt, type IntentPromptContext } from '@/lib/voice/intent/prompts'
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/ai/ratelimit'
 
 // Intent解析はgpt-4o-miniのみ。DBへの書き込みなし。
 export const maxDuration = 15
 
 // ============================================================
-// POST /api/ai/intent — 発話からAction Intentを解析
+// POST /api/ai/intent — 発話からAction Intentを解析（自然会話対応版）
 // 認証: hk_s_uid cookie（ミドルウェア検証済み）
 // ⚠️ このAPIはActionを実行しない。Intent名とparamを返すだけ。
 // ============================================================
@@ -19,26 +19,45 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // Intent解析は1ユーザー120回/分まで（manual AIより緩め）
   if (!checkRateLimit(`intent:${uid}`, 120, 60_000)) {
     return rateLimitExceededResponse()
   }
 
-  let body: { utterance?: string; currentPath?: string; currentResourceId?: string; contextType?: string }
+  let body: {
+    utterance?:         string
+    currentPath?:       string
+    currentResourceId?: string
+    contextType?:       string
+    // 自然会話Context（オプション・後方互換あり）
+    recentMessages?:    Array<{ role: string; content: string }>
+    lastIntent?:        string
+    lastResultData?:    { type: string; items?: Array<{ id: string; label: string }> }
+  }
   try {
     body = await req.json()
   } catch {
     return Response.json({ error: 'invalid JSON' }, { status: 400 })
   }
 
-  const { utterance, currentPath = '/home', currentResourceId, contextType } = body
+  const {
+    utterance, currentPath = '/home', currentResourceId, contextType,
+    recentMessages, lastIntent, lastResultData,
+  } = body
 
   if (!utterance?.trim()) {
     return Response.json({ error: 'utterance required' }, { status: 400 })
   }
 
-  const actionList   = buildActionListForPrompt()
-  const systemPrompt = buildIntentSystemPrompt(actionList)
+  const actionList = buildActionListForPrompt()
+
+  // 自然会話Contextをpromptへ統合
+  const promptContext: IntentPromptContext = {
+    recentMessages:  recentMessages?.slice(-6),
+    lastIntent,
+    lastResultData,
+  }
+  const systemPrompt = buildIntentSystemPrompt(actionList, promptContext)
+
   const userMessage  = [
     `発話: "${utterance.trim()}"`,
     `現在のパス: ${currentPath}`,
@@ -55,7 +74,7 @@ export async function POST(req: NextRequest) {
         { role: 'user',   content: userMessage  },
       ],
       temperature:     0.1,
-      max_tokens:      200,
+      max_tokens:      250,
       response_format: { type: 'json_object' },
     })
 
@@ -69,12 +88,10 @@ export async function POST(req: NextRequest) {
 
     const actionName = parsed.action
 
-    // Registry外のAction → 拒否
     if (actionName && !isValidAction(actionName)) {
       return Response.json({ action: null, confidence: 0, params: {}, voiceReply: null })
     }
 
-    // L3以上のAction → 拒否（V1ではwrite操作不可）
     if (actionName && isValidAction(actionName) && getActionLevel(actionName) >= 3) {
       return Response.json({
         action:     null,

@@ -9,7 +9,7 @@ import { useRouter, usePathname } from 'next/navigation'
 import { browserTTS } from '@/lib/voice/tts/browser'
 import { resolveLocalIntent } from '@/lib/voice/intent/resolver'
 import { getScreenContext } from '@/lib/voice/context/screen'
-import type { VoiceMode } from '@/lib/voice/state/types'
+import type { VoiceMode, ConversationContext, LastResultData } from '@/lib/voice/state/types'
 import type { SystemActionName } from '@/lib/voice/registry/system.actions'
 
 // ─── STT型補完（ブラウザ標準だがTS定義が不完全）─────────────────
@@ -40,82 +40,101 @@ export interface VoiceChatMessage {
   timestamp: number
 }
 
-// ─── L1データ取得 + 音声サマリー ─────────────────────────────
-async function fetchL1Summary(action: SystemActionName, projectId?: string): Promise<string> {
+// ─── L1データ取得 — 自然会話対応版 ──────────────────────────
+// 音声テキスト + 構造化データ（選択肢解決用）を返す
+interface L1Result { text: string; data: LastResultData }
+
+async function fetchL1Result(action: SystemActionName, projectId?: string): Promise<L1Result> {
+  const none = (text: string): L1Result => ({ text, data: { type: 'none' } })
   try {
     switch (action) {
       case 'system.get_today_jobs': {
-        const res  = await fetch('/api/home/data', { credentials: 'include' })
-        if (!res.ok) return '今日の作業情報を取得できませんでした。'
+        const res = await fetch('/api/home/data', { credentials: 'include' })
+        if (!res.ok) return none('今日の作業情報を取得できませんでした。')
         const data = await res.json()
-        const total = data.summary?.total ?? 0
-        const inProgress = data.summary?.inProgress ?? 0
-        if (total === 0) return '今日の担当作業はまだありません。'
-        const projectName = data.projects?.[0]?.name
-        return inProgress > 0
-          ? `今日は${total}件の作業があります。${projectName ? `最初は${projectName}です。` : ''}`
-          : `今日は${total}件の作業があります。`
+        const projects: Array<{ id: string; name: string }> = data.projects ?? []
+        const total = data.summary?.total ?? projects.length
+        if (total === 0) return none('今日の担当作業はまだありません。')
+
+        const items = projects.slice(0, 5).map((p, i) => ({
+          id: p.id,
+          label: `${i + 1}件目: ${p.name}`,
+        }))
+        const first = projects[0]
+        const text = total === 1
+          ? `今日は${first.name}の1件です。開きますか？`
+          : `今日は${total}件あります。最初は${first.name}です。開きますか？`
+        return { text, data: { type: 'job_list', items } }
       }
       case 'system.get_notifications': {
-        const res  = await fetch('/api/notifications', { credentials: 'include' })
-        if (!res.ok) return '通知を取得できませんでした。'
+        const res = await fetch('/api/notifications', { credentials: 'include' })
+        if (!res.ok) return none('通知を取得できませんでした。')
         const data = await res.json()
-        const items  = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : [])
-        const unread = items.filter((n: { is_read?: boolean }) => !n.is_read).length
-        return unread === 0 ? '未読の通知はありません。' : `未読の通知が${unread}件あります。`
+        const list  = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : [])
+        const unread = list.filter((n: { is_read?: boolean }) => !n.is_read).length
+        return none(unread === 0 ? '未読の通知はありません。' : `未読の通知が${unread}件あります。`)
       }
       case 'system.get_schedule': {
-        const res  = await fetch('/api/schedule', { credentials: 'include' })
-        if (!res.ok) return 'スケジュールを取得できませんでした。'
+        const res = await fetch('/api/schedule', { credentials: 'include' })
+        if (!res.ok) return none('スケジュールを取得できませんでした。')
         const data = await res.json()
         const items = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : [])
-        return items.length === 0 ? '今後の予定はありません。' : `スケジュールに${items.length}件の予定があります。`
+        return none(items.length === 0 ? '今後の予定はありません。' : `スケジュールに${items.length}件の予定があります。`)
       }
       case 'system.get_shifts': {
-        const res  = await fetch('/api/shifts', { credentials: 'include' })
-        if (!res.ok) return 'シフトを取得できませんでした。'
+        const res = await fetch('/api/shifts', { credentials: 'include' })
+        if (!res.ok) return none('シフトを取得できませんでした。')
         const data = await res.json()
         const items = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : [])
-        return items.length === 0 ? 'シフトはありません。' : `シフトが${items.length}件登録されています。`
+        return none(items.length === 0 ? 'シフトはありません。' : `シフトが${items.length}件登録されています。`)
       }
       case 'system.get_attendance':
-        return '勤怠画面に詳細を表示します。'
+        return none('勤怠画面に詳細を表示します。')
       case 'system.get_expenses': {
-        const res  = await fetch('/api/expenses', { credentials: 'include' })
-        if (!res.ok) return '経費情報を取得できませんでした。'
+        const res = await fetch('/api/expenses', { credentials: 'include' })
+        if (!res.ok) return none('経費情報を取得できませんでした。')
         const data = await res.json()
         const items   = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : [])
         const pending = items.filter((e: { status?: string }) => e.status === 'draft' || e.status === 'submitted').length
-        return pending === 0 ? '申請中の経費はありません。' : `申請中の経費が${pending}件あります。`
+        return none(pending === 0 ? '申請中の経費はありません。' : `申請中の経費が${pending}件あります。`)
       }
       case 'system.get_manuals': {
-        if (!projectId) return 'マニュアルを確認するには案件の画面を開いてください。'
-        const res  = await fetch(`/api/jobs/${projectId}/manuals`, { credentials: 'include' })
-        if (!res.ok) return 'マニュアルを取得できませんでした。'
+        if (!projectId) return none('マニュアルを確認するには案件の画面を開いてください。')
+        const res = await fetch(`/api/jobs/${projectId}/manuals`, { credentials: 'include' })
+        if (!res.ok) return none('マニュアルを取得できませんでした。')
         const data = await res.json()
-        const items = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : [])
-        return items.length === 0 ? 'マニュアルはまだ登録されていません。' : `マニュアルが${items.length}件あります。`
+        const list: Array<{ id: string; title: string; scope?: string }> = data.manuals ?? []
+        if (list.length === 0) return none('マニュアルはまだ登録されていません。')
+
+        const items = list.slice(0, 5).map((m, i) => ({
+          id: m.id,
+          label: `${i + 1}件目: ${m.title}`,
+        }))
+        const text = list.length === 1
+          ? `${list[0].title}のマニュアルがあります。読み上げますか？`
+          : `マニュアルが${list.length}件あります。どれを確認しますか？`
+        return { text, data: { type: 'manual_list', items } }
       }
       case 'system.get_profile': {
-        const res  = await fetch('/api/profile', { credentials: 'include' })
-        if (!res.ok) return 'プロフィールを取得できませんでした。'
+        const res = await fetch('/api/profile', { credentials: 'include' })
+        if (!res.ok) return none('プロフィールを取得できませんでした。')
         const data = await res.json()
         const name = data?.data?.name ?? data?.name
-        return name ? `${name}さんのプロフィールです。` : 'プロフィール画面を確認してください。'
+        return none(name ? `${name}さんのプロフィールです。` : 'プロフィール画面を確認してください。')
       }
       case 'system.get_job_detail': {
-        if (!projectId) return '案件の画面を開いてから確認してください。'
-        const res  = await fetch(`/api/projects/${projectId}`, { credentials: 'include' })
-        if (!res.ok) return '案件情報を取得できませんでした。'
+        if (!projectId) return none('案件の画面を開いてから確認してください。')
+        const res = await fetch(`/api/projects/${projectId}`, { credentials: 'include' })
+        if (!res.ok) return none('案件情報を取得できませんでした。')
         const data = await res.json()
         const name = data?.data?.name ?? data?.name
-        return name ? `現在の案件は${name}です。` : '案件詳細を確認してください。'
+        return none(name ? `現在の案件は${name}です。` : '案件詳細を確認してください。')
       }
       default:
-        return ''
+        return none('')
     }
   } catch {
-    return 'データの取得中にエラーが発生しました。'
+    return none('データの取得中にエラーが発生しました。')
   }
 }
 
@@ -199,11 +218,15 @@ export function useVoiceAssistant({ projectId }: UseVoiceAssistantOptions = {}):
   const [messages,     setMessages]    = React.useState<VoiceChatMessage[]>([])
   const [isSession,    setIsSession]   = React.useState(false)
 
-  const recognitionRef   = React.useRef<SpeechRecognitionInstance | null>(null)
-  const modeRef          = React.useRef<VoiceMode>('idle')
-  const isSessionRef     = React.useRef(false)
-  const silenceTimerRef  = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const startListeningRef = React.useRef<() => void>(() => {})
+  const recognitionRef     = React.useRef<SpeechRecognitionInstance | null>(null)
+  const modeRef            = React.useRef<VoiceMode>('idle')
+  const isSessionRef       = React.useRef(false)
+  const silenceTimerRef    = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const startListeningRef  = React.useRef<() => void>(() => {})
+  // 自然会話Context（stale closure回避のためref）
+  const conversationCtxRef = React.useRef<ConversationContext>({})
+  // messages の最新値（handleUtterance内で参照）
+  const messagesRef        = React.useRef<VoiceChatMessage[]>([])
 
   const setModeSync = React.useCallback((m: VoiceMode) => {
     modeRef.current = m
@@ -280,7 +303,11 @@ export function useVoiceAssistant({ projectId }: UseVoiceAssistantOptions = {}):
   }, [clearSilenceTimer, setModeSync])
 
   const addMessage = React.useCallback((role: 'user' | 'assistant', text: string) => {
-    setMessages(prev => [...prev.slice(-4), { role, text, timestamp: Date.now() }])
+    setMessages(prev => {
+      const next = [...prev.slice(-4), { role, text, timestamp: Date.now() }]
+      messagesRef.current = next
+      return next
+    })
   }, [])
 
   const executeAction = React.useCallback(async (result: IntentResult) => {
@@ -301,19 +328,27 @@ export function useVoiceAssistant({ projectId }: UseVoiceAssistantOptions = {}):
       || action === 'system.go_back'
 
     if (isNavAction) {
-      const navReply = executeL2Navigation(action, router, projectId)
+      // Intent APIが選択肢から解決したprojectIdを優先する（「1件目を開いて」等）
+      const effectiveProjectId = result.params?.projectId || projectId
+      const navReply = executeL2Navigation(action, router, effectiveProjectId)
       const reply    = voiceReply ?? navReply
       setResponse(reply)
       addMessage('assistant', reply)
+      conversationCtxRef.current = { lastIntent: action, lastAction: action }
       speakAndMaybeResume(reply)
       return
     }
 
-    // L1 Read-only
-    const l1Summary = await fetchL1Summary(action, projectId)
-    const reply = voiceReply ?? l1Summary
+    // L1 Read-only — 構造化データも保存（選択肢解決用）
+    const l1 = await fetchL1Result(action, projectId)
+    const reply = voiceReply ?? l1.text
     setResponse(reply)
     addMessage('assistant', reply)
+    conversationCtxRef.current = {
+      lastIntent:     action,
+      lastAction:     action,
+      lastResultData: l1.data,
+    }
     speakAndMaybeResume(reply)
   }, [router, projectId, addMessage, speakAndMaybeResume])
 
@@ -341,6 +376,11 @@ export function useVoiceAssistant({ projectId }: UseVoiceAssistantOptions = {}):
 
     try {
       const ctx = getScreenContext(pathname)
+      // 直近の会話履歴とContextを渡して自然会話を実現
+      const recentMessages = messagesRef.current.slice(-6).map(m => ({
+        role:    m.role,
+        content: m.text,
+      }))
       const res = await fetch('/api/ai/intent', {
         method:      'POST',
         headers:     { 'Content-Type': 'application/json' },
@@ -350,6 +390,10 @@ export function useVoiceAssistant({ projectId }: UseVoiceAssistantOptions = {}):
           currentPath:       pathname,
           currentResourceId: projectId ?? ctx.currentResourceId,
           contextType:       ctx.contextType,
+          // 自然会話Context
+          recentMessages,
+          lastIntent:     conversationCtxRef.current.lastIntent,
+          lastResultData: conversationCtxRef.current.lastResultData,
         }),
       })
       if (!res.ok) { finishWithError('音声アシスタントへの接続に失敗しました。'); return }

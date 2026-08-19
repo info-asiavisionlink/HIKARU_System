@@ -36,9 +36,29 @@ export interface VoiceState {
   mode:                VoiceMode
   currentPath:         string
   contextType:         ContextType
-  currentResourceId?:  string    // /jobs/[id] の id（= projectId）
+  currentResourceId?:  string
   lastUserUtterance?:  string
-  lastQuerySummary?:   string    // L1取得結果のサマリ（フォローアップ用）
+  lastQuerySummary?:   string
   recentMessages:      VoiceMessage[]
   errorMessage?:       string
+}
+
+// ─── 自然会話用 Conversation Context ─────────────────────────
+// DB保存なし。Sessionスコープのみ。
+
+export interface LastResultItem {
+  id:    string
+  label: string
+}
+
+export interface LastResultData {
+  type:    'job_list' | 'notification_list' | 'schedule_list' | 'manual_list' | 'single' | 'none'
+  items?:  LastResultItem[]  // 選択肢（「1件目を開いて」などの解決に使用）
+  summary?: string
+}
+
+export interface ConversationContext {
+  lastIntent?:     string
+  lastAction?:     string
+  lastResultData?: LastResultData
 }
