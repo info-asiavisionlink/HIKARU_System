@@ -6,17 +6,33 @@ import {
   type ManualItem,
   type ChatMessage,
 } from '@/modules/manual-ai'
+import {
+  checkRateLimit,
+  WORKER_RATE_LIMIT,
+  rateLimitExceededResponse,
+} from '@/lib/ai/ratelimit'
+
+// Vercel: SSE streaming のタイムアウト上限（OpenAI最大応答 + 余裕）
+export const maxDuration = 60
 
 // ============================================================
 // POST /api/ai/manual — SSEストリーミングでAI回答を返す
 // 認証: hk_s_uid cookie（ミドルウェア検証済み）
-// ownership: profiles → entity_type/entity_id → project_assignments
+// ownership:
+//   profiles → entity_type / entity_id / company_id
+//   → project_assignments
+//   → projects.company_id === worker.company_id（company isolation）
 // ============================================================
 
 export async function POST(req: NextRequest) {
   const uid = req.cookies.get('hk_s_uid')?.value
   if (!uid) {
     return Response.json({ success: false, error: { code: 'UNAUTHORIZED', message: '認証が必要です' } }, { status: 401 })
+  }
+
+  // ---- Rate Limit（SSE開始前に判定）----
+  if (!checkRateLimit(`worker:${uid}`, WORKER_RATE_LIMIT.limit, WORKER_RATE_LIMIT.windowMs)) {
+    return rateLimitExceededResponse()
   }
 
   const body = await req.json()
@@ -38,17 +54,20 @@ export async function POST(req: NextRequest) {
 
   const admin = createAdminClient()
 
-  // ---- project_assignments ownership確認（Employee / Partner 双方対応）----
-  const { data: profile } = await admin
+  // ---- profileからworker情報取得（company_idを含む）----
+  type WorkerProfile = { entity_type: string; entity_id: string; company_id: string }
+  const { data: profileRaw } = await admin
     .from('profiles')
-    .select('entity_type, entity_id')
+    .select('entity_type, entity_id, company_id')
     .eq('id', uid)
     .single()
+  const profile = profileRaw as WorkerProfile | null
 
-  if (!profile?.entity_type || !profile?.entity_id) {
+  if (!profile?.entity_type || !profile?.entity_id || !profile?.company_id) {
     return Response.json({ success: false, error: { code: 'FORBIDDEN', message: 'アクセス権がありません' } }, { status: 403 })
   }
 
+  // ---- project_assignments ownership確認（Employee / Partner 双方対応）----
   const { data: assignment } = await admin
     .from('project_assignments')
     .select('project_id')
@@ -61,8 +80,22 @@ export async function POST(req: NextRequest) {
     return Response.json({ success: false, error: { code: 'FORBIDDEN', message: 'この案件へのアクセス権がありません' } }, { status: 403 })
   }
 
+  // ---- company isolation: プロジェクトのcompany_idとworkerのcompany_idが一致するか確認 ----
+  type ProjectRow = { id: string; company_id: string }
+  const { data: projectRaw } = await admin
+    .from('projects')
+    .select('id, company_id')
+    .eq('id', projectId)
+    .single()
+  const project = projectRaw as ProjectRow | null
+
+  if (!project || project.company_id !== profile.company_id) {
+    return Response.json({ success: false, error: { code: 'FORBIDDEN', message: 'この案件へのアクセス権がありません' } }, { status: 403 })
+  }
+
   // ---- jobId整合確認（指定された場合のみ）----
   // worker_id と project_id が一致するジョブか確認し、不一致は null として扱う
+  // ⚠️ 現在: 不正jobIdはサイレント劣化（null扱い）。403化はPhase A-2候補として検討。
   let validJobId: string | null = null
   if (jobId) {
     const { data: job } = await admin
@@ -75,7 +108,7 @@ export async function POST(req: NextRequest) {
     validJobId = job?.id ?? null
   }
 
-  // ---- SSEストリーミング開始（ownership確認済み）----
+  // ---- SSEストリーミング開始（ownership・company isolation確認済み）----
   const encoder = new TextEncoder()
 
   function send(data: object): Uint8Array {
@@ -87,7 +120,8 @@ export async function POST(req: NextRequest) {
 
   ;(async () => {
     try {
-      // ---- マニュアル取得 ----
+      // ---- マニュアル取得（project_id 絞り込み）----
+      // project.company_id = worker.company_id の確認はSSE外で完了済み
       const { data: manuals } = await admin
         .from('manuals')
         .select('id, type, title, content, file_url')
@@ -168,11 +202,13 @@ export async function GET(req: NextRequest) {
   const admin = createAdminClient()
 
   // ---- project_assignments ownership確認（Employee / Partner 双方対応）----
-  const { data: profile } = await admin
+  type GetWorkerProfile = { entity_type: string; entity_id: string }
+  const { data: profileRaw2 } = await admin
     .from('profiles')
     .select('entity_type, entity_id')
     .eq('id', uid)
     .single()
+  const profile = profileRaw2 as GetWorkerProfile | null
 
   if (!profile?.entity_type || !profile?.entity_id) {
     return Response.json({ success: false, error: { code: 'FORBIDDEN', message: 'アクセス権がありません' } }, { status: 403 })
