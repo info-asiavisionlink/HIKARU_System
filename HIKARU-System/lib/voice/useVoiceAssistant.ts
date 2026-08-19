@@ -160,14 +160,16 @@ export interface UseVoiceAssistantOptions {
 }
 
 export interface UseVoiceAssistantReturn {
-  mode:           VoiceMode
-  transcript:     string
-  response:       string
-  errorMessage:   string
-  messages:       VoiceChatMessage[]
+  mode:              VoiceMode
+  transcript:        string
+  response:          string
+  errorMessage:      string
+  messages:          VoiceChatMessage[]
   isSpeechSupported: boolean
-  startListening: () => void
-  stopAll:        () => void
+  startListening:    () => void
+  stopAll:           () => void
+  /** クイックコマンド等から直接発話テキストを処理する */
+  handleUtterance:   (utterance: string) => Promise<void>
 }
 
 export function useVoiceAssistant({ projectId }: UseVoiceAssistantOptions = {}): UseVoiceAssistantReturn {
@@ -310,5 +312,5 @@ export function useVoiceAssistant({ projectId }: UseVoiceAssistantOptions = {}):
     try { rec.start() } catch { finishWithError('マイクを起動できませんでした。') }
   }, [isSpeechSupported, mode, handleUtterance, finishWithError])
 
-  return { mode, transcript, response, errorMessage, messages, isSpeechSupported, startListening, stopAll }
+  return { mode, transcript, response, errorMessage, messages, isSpeechSupported, startListening, stopAll, handleUtterance }
 }
