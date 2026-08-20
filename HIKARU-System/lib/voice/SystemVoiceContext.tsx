@@ -239,8 +239,7 @@ function isConfirmNo(text: string): boolean {
   if (CONFIRM_NO_EXACT.has(t)) return true
   return CONFIRM_NO_STARTS.some(w => t.startsWith(w) || t.includes(w))
 }
-const STANDBY_MS         = 60_000       // 60s 無発話 → Standby表示
-const SESSION_TIMEOUT_MS = 5 * 60_000  // Standby後5分 → Session終了
+const STANDBY_MS = 60_000  // 60s 無発話 → Standby表示（Sessionは「終了」発声まで継続）
 
 // ─── Voice Settings localStorage ─────────────────────────────
 const LS_KEY = 'hikaru_system_voice_settings'
@@ -454,10 +453,9 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
   // ─── Realtime refs ────────────────────────────────────────────
   const realtimeSessionRef    = React.useRef<any>(null)
   const voiceEngineModeRef    = React.useRef<VoiceEngineMode>('off')
-  const micTrackRef           = React.useRef<MediaStreamTrack | null>(null)
-  const isSpeakingRef         = React.useRef(false)
-  const resumeTimerRef        = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-  const lastTranscriptLenRef  = React.useRef(0)
+  const micTrackRef      = React.useRef<MediaStreamTrack | null>(null)
+  const isSpeakingRef    = React.useRef(false)
+  const resumeTimerRef   = React.useRef<ReturnType<typeof setTimeout> | null>(null)
 
   React.useEffect(() => { voiceEngineModeRef.current = voiceEngineMode }, [voiceEngineMode])
 
@@ -514,6 +512,8 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     } catch {}
   }, [])
 
+  // Tool実行中のMute（Barge-inが不要な処理中のみ使用）
+  // AI speaking中はmuteしない → server VADでBarge-in有効
   const muteMic = React.useCallback((mute: boolean) => {
     try { (realtimeSessionRef.current as any)?.mute?.(mute) } catch {}
     findMicTrack()
@@ -541,17 +541,7 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     standbyTimerRef.current = setTimeout(() => {
       if (!isSessionRef.current) return
       setIsStandby(true)
-      // Standby後 SESSION_TIMEOUT_MS でSession終了
-      sessionTimerRef.current = setTimeout(() => {
-        if (!isSessionRef.current) return
-        isSessionRef.current = false
-        setIsSession(false)
-        setIsStandby(false)
-        browserTTS.stop()
-        recognitionRef.current?.abort()
-        modeRef.current = 'idle'
-        setMode('idle')
-      }, SESSION_TIMEOUT_MS)
+      // Standby表示のみ。Sessionはユーザーが「終了」と言うまで継続。
     }, STANDBY_MS)
   }, [clearActivityTimers])
 
@@ -931,7 +921,7 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
         if (voiceEngineModeRef.current !== 'realtime') return
         isSpeakingRef.current = true
         clearResumeTimer()
-        muteMic(true)
+        // Mic mute なし → server VAD + echo cancellation でBarge-in有効
         setModeSync('speaking')
       })
       session.on?.('agent_end_speech', () => {
@@ -939,15 +929,12 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
         isSpeakingRef.current = false
         setModeSync('processing')
         clearResumeTimer()
-        // TTS音声の再生時間を文字数から推定してMic再開を遅延する
-        const delay = Math.min(Math.max(2500, lastTranscriptLenRef.current * 60), 9000)
-        lastTranscriptLenRef.current = 0
+        // 300ms safety margin（WebRTCバッファ分）後にLISTENINGへ
         resumeTimerRef.current = setTimeout(() => {
           if (voiceEngineModeRef.current !== 'realtime') return
           if (modeRef.current !== 'processing') return
-          muteMic(false)
           setModeSync('listening')
-        }, delay)
+        }, 300)
       })
       session.on?.('user_start_speech',   () => { if (voiceEngineModeRef.current === 'realtime') setModeSync('listening') })
       session.on?.('user_end_speech',     () => { if (voiceEngineModeRef.current === 'realtime') setModeSync('processing') })
@@ -967,7 +954,6 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
         if (text?.trim()) {
           setResponse(text.trim())
           addMessage('assistant', text.trim())
-          lastTranscriptLenRef.current = text.length
         }
       })
 
