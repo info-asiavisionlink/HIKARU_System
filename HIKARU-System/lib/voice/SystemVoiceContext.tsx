@@ -898,82 +898,95 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
       // transport: 'webrtc' は ephemeral client secret (ek_...) での接続に必須
       const session = new RealtimeSession(agent, { transport: 'webrtc', model: RT_MODEL } as any)
 
-      // connected eventはSDKバージョンによって発火タイミングが異なるため、
-      // connect()解決後に直接状態をセットする（下部参照）
-      session.on?.('connected', () => {
-        if (voiceEngineModeRef.current !== 'realtime') {
-          setVoiceEngineMode('realtime')
-          voiceEngineModeRef.current = 'realtime'
-          setModeSync('listening')
-        }
+      // ── @openai/agents-realtime v0.17 正式イベント ──────────────
+      // 注: connected/disconnected/agent_start_speech/agent_end_speech/
+      //     user_start_speech/user_end_speech/tool_call_start/tool_call_end/
+      //     user_transcription_done/agent_transcription_done は v0.17に存在しない。
+
+      // AI処理開始（audio_start前に発火）
+      session.on?.('agent_start', () => {
+        if (voiceEngineModeRef.current !== 'realtime') return
+        setModeSync('processing')
       })
-      session.on?.('disconnected', () => {
-        // SpeechRecognition自動起動を削除。WebRTCとSpeechRecのMic競合がMic点滅の直接原因。
-        // 切断時はstateをリセットするだけ。MiniVoicePanelにはidleが表示される。
-        realtimeSessionRef.current = null
-        micTrackRef.current = null
-        clearResumeTimer()
-        isSpeakingRef.current = false
-        setVoiceEngineMode('off')
-        voiceEngineModeRef.current = 'off'
-        setModeSync('idle')
-      })
-      session.on?.('error', (err: unknown) => {
-        const msg = (err as Error)?.message ?? String(err)
-        console.error('[realtime] session error:', msg)
-        // SpeechRecognition自動起動を削除。Mic競合防止。
-        realtimeSessionRef.current = null
-        micTrackRef.current = null
-        clearResumeTimer()
-        isSpeakingRef.current = false
-        setVoiceEngineMode('off')
-        voiceEngineModeRef.current = 'off'
-        setModeSync('idle')
-      })
-      session.on?.('agent_start_speech', () => {
+
+      // AI音声出力開始
+      session.on?.('audio_start', () => {
         if (voiceEngineModeRef.current !== 'realtime') return
         isSpeakingRef.current = true
         clearResumeTimer()
-        // Mic mute なし → server VAD + echo cancellation でBarge-in有効
         setModeSync('speaking')
       })
-      session.on?.('agent_end_speech', () => {
+
+      // AI音声出力終了 → 300ms後にListeningへ
+      session.on?.('audio_stopped', () => {
         if (voiceEngineModeRef.current !== 'realtime') return
         isSpeakingRef.current = false
         setModeSync('processing')
         clearResumeTimer()
-        // 300ms safety margin（WebRTCバッファ分）後にLISTENINGへ
         resumeTimerRef.current = setTimeout(() => {
           if (voiceEngineModeRef.current !== 'realtime') return
           if (modeRef.current !== 'processing') return
           setModeSync('listening')
         }, 300)
       })
-      session.on?.('user_start_speech',   () => { if (voiceEngineModeRef.current === 'realtime') setModeSync('listening') })
-      session.on?.('user_end_speech',     () => { if (voiceEngineModeRef.current === 'realtime') setModeSync('processing') })
-      // Tool実行中は 'working' へ（Mic OFFを維持）
-      session.on?.('tool_call_start', () => {
+
+      // AI回答完了 — 3番目の引数にtext output（v0.17型定義確認済み）
+      session.on?.('agent_end', (_ctx: unknown, _agent: unknown, output: string) => {
+        const text = (output ?? '').trim()
+        if (text) {
+          setResponse(text)
+          addMessage('assistant', text)
+        }
+      })
+
+      // Tool開始
+      session.on?.('agent_tool_start', () => {
         if (voiceEngineModeRef.current !== 'realtime') return
         muteMic(true)
         setModeSync('working')
       })
-      session.on?.('tool_call_end', () => {
+
+      // Tool終了 — Mic解除してprocessingへ
+      session.on?.('agent_tool_end', () => {
         if (voiceEngineModeRef.current !== 'realtime') return
-        // tool_call_start でmute(true)したMicを必ずここで解除する。
-        // これを忘れるとTool後は永続的にMic OFF → 次発話が拾えない。
         muteMic(false)
         setModeSync('processing')
       })
 
-      // 発話テキスト → messages に反映
-      session.on?.('user_transcription_done',  (text: string) => {
-        if (text?.trim()) { setTranscript(text.trim()); addMessage('user', text.trim()) }
-      })
-      session.on?.('agent_transcription_done', (text: string) => {
-        if (text?.trim()) {
-          setResponse(text.trim())
-          addMessage('assistant', text.trim())
+      // User Transcript — history_addedのrole:'user'メッセージから取得
+      // input_audio: transcript フィールド、input_text: text フィールド
+      session.on?.('history_added', (item: any) => {
+        if (item?.type !== 'message' || item?.role !== 'user') return
+        const content: any[] = Array.isArray(item.content) ? item.content : []
+        const text = content
+          .map((c: any) => c.transcript ?? c.text ?? '')
+          .join('')
+          .trim()
+        if (text) {
+          setTranscript(text)
+          addMessage('user', text)
         }
+      })
+
+      // Barge-in（User割り込み）— SDKが音声停止済み、stateをlisteningへ
+      session.on?.('audio_interrupted', () => {
+        if (voiceEngineModeRef.current !== 'realtime') return
+        isSpeakingRef.current = false
+        clearResumeTimer()
+        setModeSync('listening')
+      })
+
+      // Error — セッション破棄してidleへ（SpeechRec起動なし）
+      session.on?.('error', (err: unknown) => {
+        const msg = (err as any)?.error?.message ?? (err as Error)?.message ?? String(err)
+        console.error('[realtime] session error:', msg)
+        realtimeSessionRef.current = null
+        micTrackRef.current = null
+        clearResumeTimer()
+        isSpeakingRef.current = false
+        setVoiceEngineMode('off')
+        voiceEngineModeRef.current = 'off'
+        setModeSync('idle')
       })
 
       await session.connect({ apiKey: clientSecret } as any)
