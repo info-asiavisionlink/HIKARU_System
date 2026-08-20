@@ -458,6 +458,7 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
   const micTrackRef      = React.useRef<MediaStreamTrack | null>(null)
   const isSpeakingRef    = React.useRef(false)
   const resumeTimerRef   = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const streamingTranscriptRef = React.useRef('')
 
   React.useEffect(() => { voiceEngineModeRef.current = voiceEngineMode }, [voiceEngineMode])
 
@@ -475,6 +476,7 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
   const standbyTimerRef    = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const sessionTimerRef    = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const startListeningRef  = React.useRef<() => void>(() => {})
+  const connectRealtimeRef = React.useRef<() => void>(() => {})
   const conversationCtxRef = React.useRef<ConversationContext>({})
   const messagesRef        = React.useRef<SystemVoiceChatMessage[]>([])
   const voiceSettingsRef   = React.useRef<VoiceSettings>(DEFAULT_VOICE_SETTINGS)
@@ -522,7 +524,7 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
 
   const interrupt = React.useCallback(() => {
     clearResumeTimer()
-    try { (realtimeSessionRef.current as any)?.transport?.interrupt?.() } catch {}
+    try { (realtimeSessionRef.current as any)?.interrupt?.() } catch {}
     isSpeakingRef.current = false
     muteMic(false)
     setModeSync('listening')
@@ -896,7 +898,18 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
       const tools   = buildHikaruRealtimeTools(router, projectIdRef)
       const agent   = new RealtimeAgent({ name: 'JARVIS Worker Realtime', instructions: RT_SYSTEM_PROMPT, tools })
       // transport: 'webrtc' は ephemeral client secret (ek_...) での接続に必須
-      const session = new RealtimeSession(agent, { transport: 'webrtc', model: RT_MODEL } as any)
+      // eagerness: 'high' でsemantic_VADのターン検出を高速化（Latency改善）
+      const session = new RealtimeSession(agent, {
+        transport: 'webrtc',
+        model:     RT_MODEL,
+        config:    {
+          audio: {
+            input: {
+              turnDetection: { type: 'semantic_vad', eagerness: 'high' },
+            },
+          },
+        },
+      } as any)
 
       // ── @openai/agents-realtime v0.17 正式イベント ──────────────
       // 注: connected/disconnected/agent_start_speech/agent_end_speech/
@@ -905,11 +918,15 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
 
       // AI処理開始（通常audio_start前に発火するが、高速応答時は逆転することがある）
       // listening/idle時のみprocessingへ遷移。speaking中は上書きしない。
+      // Streamingトランスクリプトをリセット（新しいAI回答の準備）
       session.on?.('agent_start', () => {
         if (voiceEngineModeRef.current !== 'realtime') return
+        streamingTranscriptRef.current = ''
+        setResponse('')
         if (modeRef.current === 'listening' || modeRef.current === 'idle') {
           setModeSync('processing')
         }
+        console.log('[JARVIS-latency] agent_start', Date.now())
       })
 
       // AI音声出力開始
@@ -918,6 +935,7 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
         isSpeakingRef.current = true
         clearResumeTimer()
         setModeSync('speaking')
+        console.log('[JARVIS-latency] audio_start (first AI audio)', Date.now())
       })
 
       // AI音声出力終了 → 300ms後にListeningへ
@@ -926,10 +944,12 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
         isSpeakingRef.current = false
         setModeSync('processing')
         clearResumeTimer()
+        console.log('[JARVIS-latency] audio_stopped', Date.now())
         resumeTimerRef.current = setTimeout(() => {
           if (voiceEngineModeRef.current !== 'realtime') return
           if (modeRef.current !== 'processing') return
           setModeSync('listening')
+          console.log('[JARVIS-latency] listening_restored', Date.now())
         }, 300)
       })
 
@@ -956,18 +976,15 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
         setModeSync('processing')
       })
 
-      // User Transcript — history_addedのrole:'user'メッセージから取得
-      // input_audio: transcript フィールド、input_text: text フィールド
+      // User Transcript (input_textのみ) — audio transcriptはtransport_eventで取得
+      // input_audioはhistory_added時点でtranscript=nullのため、ここでは扱わない
       session.on?.('history_added', (item: any) => {
         if (item?.type !== 'message' || item?.role !== 'user') return
         const content: any[] = Array.isArray(item.content) ? item.content : []
-        const text = content
-          .map((c: any) => c.transcript ?? c.text ?? '')
-          .join('')
-          .trim()
-        if (text) {
-          setTranscript(text)
-          addMessage('user', text)
+        const textInput = content.find((c: any) => c.type === 'input_text')
+        if (textInput?.text) {
+          setTranscript(textInput.text)
+          addMessage('user', textInput.text)
         }
       })
 
@@ -976,20 +993,59 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
         if (voiceEngineModeRef.current !== 'realtime') return
         isSpeakingRef.current = false
         clearResumeTimer()
+        streamingTranscriptRef.current = ''
         setModeSync('listening')
+        console.log('[JARVIS-latency] audio_interrupted (barge-in)', Date.now())
       })
 
-      // Error — セッション破棄してidleへ（SpeechRec起動なし）
+      // Error — ログのみ。Non-fatalエラーでSessionを終了しない（Infinite Conversation維持）
+      // 実際の切断はtransport connection_changeイベントで検知・処理する。
       session.on?.('error', (err: unknown) => {
         const msg = (err as any)?.error?.message ?? (err as Error)?.message ?? String(err)
-        console.error('[realtime] session error:', msg)
+        console.error('[realtime] session error (non-fatal, session continues):', msg)
+      })
+
+      // ── Transport level listeners (v0.17 確認済みAPI) ───────────
+      const transport = session.transport as any
+
+      // User音声Transcript確定 — history_addedのinput_audioはtranscript=nullのためここで処理
+      // SDKがInputAudioTranscriptionCompletedEventをtransport_eventとして発火する
+      session.on?.('transport_event', (event: any) => {
+        if (event?.type !== 'conversation.item.input_audio_transcription.completed') return
+        const text = (event.transcript ?? '').trim()
+        if (!text || voiceEngineModeRef.current !== 'realtime') return
+        setTranscript(text)
+        addMessage('user', text)
+        console.log('[JARVIS-latency] user_transcript_completed', Date.now(), text.slice(0, 20))
+      })
+
+      // AI Transcript Streaming Delta — 音声再生と同期してUIテキストを逐次更新
+      // Single Source of Truth: deltaを累積し、agent_endで最終確定テキストで上書き
+      transport.on?.('audio_transcript_delta', (deltaEvent: any) => {
+        if (voiceEngineModeRef.current !== 'realtime') return
+        const delta = deltaEvent?.delta ?? ''
+        if (!delta) return
+        streamingTranscriptRef.current += delta
+        setResponse(streamingTranscriptRef.current)
+      })
+
+      // 接続状態変化 — 予期せぬ切断時にSession継続のため自動Reconnect（1回）
+      transport.on?.('connection_change', (status: any) => {
+        if (status !== 'disconnected') return
+        if (!isSessionRef.current) return
+        if (voiceEngineModeRef.current !== 'realtime') return
+        console.warn('[realtime] connection dropped, reconnecting in 1.5s')
         realtimeSessionRef.current = null
-        micTrackRef.current = null
         clearResumeTimer()
         isSpeakingRef.current = false
         setVoiceEngineMode('off')
         voiceEngineModeRef.current = 'off'
-        setModeSync('idle')
+        setModeSync('processing')
+        setTimeout(() => {
+          if (!isSessionRef.current) return
+          if (voiceEngineModeRef.current !== 'off') return
+          connectRealtimeRef.current()
+        }, 1500)
       })
 
       await session.connect({ apiKey: clientSecret } as any)
@@ -1011,7 +1067,9 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
       voiceEngineModeRef.current = 'off'
       setModeSync('idle')
     }
-  }, [router, addMessage, setModeSync, muteMic, clearResumeTimer])
+  }, [router, addMessage, setModeSync, muteMic, clearResumeTimer, setResponse])
+
+  React.useEffect(() => { connectRealtimeRef.current = connectRealtime }, [connectRealtime])
 
   const disconnectRealtime = React.useCallback(() => {
     clearResumeTimer()
