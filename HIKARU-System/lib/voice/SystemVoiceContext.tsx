@@ -38,33 +38,44 @@ back=前の画面, job_detail=案件詳細, job_chat=AIチャット,
 job_manual=マニュアル, job_report=報告書
 
 ## Write操作（最重要ルール）
-打刻・作業開始・完了・経費申請等のWrite操作は必ずユーザーの確認を取ってから execute_confirmed_action を呼ぶ。
-確認なしに実行ツールを呼ばない。
-Tool Resultが返ってきてから初めて「完了しました」と発話する。
-Tool Resultを待たずに「やりました」「完了しました」と言うことは絶対禁止。
+★ ツールを呼ぶ前に言葉で「完了しました」「やりました」「打刻しました」等を言うことは絶対禁止。
+★ execute_confirmed_actionを呼び、Tool Resultを受け取ってから初めて成功/失敗を発話する。
+★ Tool Resultがなければ何も成功していない。
 
-確認フロー（必ず守る）:
+確認フロー（全Write操作で必ず守る）:
 1. 「出勤を打刻します。よろしいですか？」と聞く
-2. ユーザーが「はい」等と答える
-3. execute_confirmed_action({ action: 'system.clock_in', params: {} }) を呼ぶ
+2. ユーザーが「はい」「うん」「OK」等と答える
+3. 何も言わずにexecute_confirmed_actionツールを呼ぶ（この時点で発話しない）
 4. Tool Resultが返ってくる
-5. success=trueならToolが返したvoiceReplyをそのまま発話
-6. 失敗なら「打刻できませんでした」と正確に伝える
+5. Tool ResultのvoiceReplyをそのまま読み上げる
+6. 失敗なら「できませんでした」とエラーを正確に伝える
 
-## actionとparamsの対応
-- system.clock_in       出勤打刻（params: {}）
-- system.clock_out      退勤打刻（params: {}）
-- system.start_job      作業開始（params: { projectId }）※projectIdはget_current_contextかget_today_jobsで取得
-- system.complete_job   作業完了（params: { projectId }）※projectIdは同上
-- system.submit_expense 経費申請（params: { expenseId }）※expenseIdはget_expense_summaryで取得
-- system.mark_notification_read 通知既読（params: { notificationId }）※notificationIdはget_notificationsで取得
+## actionとparamsの対応（全Write Action）
+- system.clock_in      出勤打刻（params: {}）
+- system.clock_out     退勤打刻（params: {}）
+- system.break_start   休憩開始（params: {}）
+- system.break_end     休憩終了（params: {}）
+- system.start_job     作業開始（params: { projectId: "実ID" }）
+- system.complete_job  作業完了（params: { projectId: "実ID" }）
+- system.submit_expense 経費申請（params: { expenseId: "実ID" }）
+- system.mark_notification_read 通知既読（params: { notificationId: "実ID" }）
+
+## 経費・報告書の追加ツール
+- create_expense_draft: 経費下書き作成。amount/categoryが必要。ユーザーへ確認後に呼ぶ。
+- generate_report: AI品質報告書を生成。jobIdが必要。作業完了後に呼べる。
 
 ## Context解決ルール（ID取得の順序）
 ユーザーが「この作業」「今の案件」等と言った場合:
 1. まず get_current_context を呼んでcurrentProjectIdを確認
-2. projectIdがあれば確認文句でユーザーに確認する
+2. projectIdがあれば案件名をユーザーに確認する
 3. projectIdがなければ get_today_jobs で一覧取得してユーザーに選ばせる
-projectIdを推測・捏造しない。必ずツールで取得した実IDを使う。`
+IDを推測・捏造しない。必ずツールで取得した実IDを使う。
+
+## 勤怠操作フロー例
+「出勤して」→「出勤を打刻します。よろしいですか？」→「はい」→execute_confirmed_action呼ぶ→Tool Result発話
+「休憩開始して」→「休憩を開始します。よろしいですか？」→「はい」→execute_confirmed_action(break_start)→発話
+「休憩終わって」→execute_confirmed_action(break_end)→発話
+「退勤して」→execute_confirmed_action(clock_out)→発話`
 
 // ─── Realtime Tools（ブラウザ側。credentials: 'include' でAuth）─
 // toolFactory = SDK の tool() 関数。FunctionTool を生成し invoke を持つオブジェクトを返す。
@@ -247,18 +258,33 @@ function buildHikaruRealtimeTools(
       },
     }),
     toolFactory({
+      // ★ CRITICAL: params を additionalProperties:false で全フィールド明示。
+      // additionalProperties:{type:'string'} はOpenAI strict mode違反で
+      // ツールが使用不可になり FAKE_SUCCESS の根本原因だった。
       name:        'execute_confirmed_action',
-      description: 'ユーザーが「はい」と明確に確認した後にのみ呼ぶ。Server Auth再検証して実行する。',
+      description: 'ユーザーが「はい」と明確に確認した後にのみ呼ぶ。Server Auth再検証して実行。呼ぶ前に言葉で成功を言わない。',
       parameters:  {
         type:       'object',
         properties: {
           action: {
             type: 'string',
-            enum: ['system.clock_in', 'system.clock_out', 'system.start_job', 'system.complete_job', 'system.submit_expense', 'system.mark_notification_read'],
+            enum: [
+              'system.clock_in', 'system.clock_out',
+              'system.break_start', 'system.break_end',
+              'system.start_job', 'system.complete_job',
+              'system.submit_expense', 'system.mark_notification_read',
+            ],
           },
           params: {
-            type:                 'object',
-            additionalProperties: { type: 'string' },
+            type:       'object',
+            properties: {
+              projectId:      { type: 'string' },
+              jobId:          { type: 'string' },
+              expenseId:      { type: 'string' },
+              notificationId: { type: 'string' },
+            },
+            required:             [],
+            additionalProperties: false,
           },
         },
         required:             ['action'],
@@ -266,6 +292,7 @@ function buildHikaruRealtimeTools(
       },
       execute: async (input: any) => {
         const { action, params = {} } = input ?? {}
+        console.log('[JARVIS-action] execute_confirmed_action called:', action, params)
         try {
           const res = await fetch('/api/ai/confirm-action', {
             method:      'POST',
@@ -274,9 +301,85 @@ function buildHikaruRealtimeTools(
             body:        JSON.stringify({ action, params, safetyLevel: 3, expiresAt: Date.now() + 90_000 }),
           })
           const data = await res.json()
+          console.log('[JARVIS-action] confirm-action result:', res.status, data)
           return res.ok ? (data.voiceReply ?? '完了しました。') : (data.error ?? '実行に失敗しました。')
-        } catch {
+        } catch (e) {
+          console.error('[JARVIS-action] confirm-action error:', e)
           return '実行中にエラーが発生しました。'
+        }
+      },
+    }),
+    toolFactory({
+      // 報告書生成 — 作業完了後にAI報告書を生成する
+      name:        'generate_report',
+      description: '作業完了後にAI品質報告書を生成する。jobIdが必要。get_current_contextまたはget_active_jobで取得。',
+      parameters:  {
+        type:       'object',
+        properties: {
+          jobId: { type: 'string' },
+        },
+        required:             ['jobId'],
+        additionalProperties: false,
+      },
+      execute: async (input: any) => {
+        const { jobId } = input ?? {}
+        if (!jobId) return '報告書を生成するにはjobIdが必要です。'
+        console.log('[JARVIS-action] generate_report:', jobId)
+        try {
+          const res = await fetch('/api/ai/report', {
+            method:      'POST',
+            headers:     { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body:        JSON.stringify({ jobId }),
+          })
+          const data = await res.json()
+          if (!res.ok) return `報告書の生成に失敗しました: ${data.error ?? 'エラー'}`
+          return data.success ? '報告書を生成しました。報告書ページで確認できます。' : `報告書の生成に失敗しました: ${data.error ?? 'エラー'}`
+        } catch {
+          return '報告書の生成中にエラーが発生しました。'
+        }
+      },
+    }),
+    toolFactory({
+      // 経費下書き作成 — 後から申請ボタンで送信するドラフトを作成
+      name:        'create_expense_draft',
+      description: '経費の下書きを作成する（申請はしない）。amount・categoryは必須。ユーザーに確認後に呼ぶ。',
+      parameters:  {
+        type:       'object',
+        properties: {
+          amount:       { type: 'string' },
+          category:     { type: 'string', enum: ['transport', 'parking', 'supplies', 'consumables', 'other'] },
+          description:  { type: 'string' },
+          expense_date: { type: 'string' },
+        },
+        required:             ['amount', 'category'],
+        additionalProperties: false,
+      },
+      execute: async (input: any) => {
+        const { amount, category, description, expense_date } = input ?? {}
+        const numAmount = Number(amount)
+        if (!numAmount || numAmount <= 0) return '金額が正しくありません。'
+        const LABELS: Record<string, string> = {
+          transport: '交通費', parking: '駐車場代', supplies: '備品', consumables: '消耗品', other: 'その他',
+        }
+        console.log('[JARVIS-action] create_expense_draft:', { amount: numAmount, category })
+        try {
+          const res = await fetch('/api/expenses', {
+            method:      'POST',
+            headers:     { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body:        JSON.stringify({
+              expense_date: expense_date || new Date().toISOString().split('T')[0],
+              category,
+              amount:       numAmount,
+              description:  description || null,
+            }),
+          })
+          const data = await res.json()
+          if (!res.ok) return `経費の登録に失敗しました: ${data.error ?? 'エラー'}`
+          return `${LABELS[category] ?? category}¥${numAmount.toLocaleString()}を下書きとして登録しました。経費申請画面から「申請する」ボタンで送信できます。`
+        } catch {
+          return '経費の登録中にエラーが発生しました。'
         }
       },
     }),

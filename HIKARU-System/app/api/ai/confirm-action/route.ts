@@ -227,6 +227,46 @@ export async function POST(req: NextRequest) {
         return Response.json({ success: true, job: updated, voiceReply: '作業を完了しました。お疲れさまでした。' })
       }
 
+      // ─── L3: break_start ──────────────────────────────────
+      case 'system.break_start': {
+        const res = await fetch(`${req.nextUrl.origin}/api/attendance/punch`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json', Cookie: req.headers.get('cookie') ?? '' },
+          body:    JSON.stringify({ type: 'break_start' }),
+        })
+        const data = await res.json()
+        logVoiceAudit({ source: 'jarvis_voice', actor: uid, actorType: 'worker',
+          companyId: profile.company_id, action, safetyLevel: level,
+          confirmed: true, result: res.ok ? 'success' : 'failed', reason: data.error })
+        if (!res.ok) {
+          const msg = data.error === 'not_clocked_in'    ? '出勤打刻がありません。先に出勤してください。'
+                    : data.error === 'already_on_break'  ? 'すでに休憩中です。'
+                    : '休憩開始に失敗しました。'
+          return Response.json({ error: msg }, { status: res.status })
+        }
+        const now = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo' })
+        return Response.json({ success: true, voiceReply: `${now}に休憩を開始しました。` })
+      }
+
+      // ─── L3: break_end ────────────────────────────────────
+      case 'system.break_end': {
+        const res = await fetch(`${req.nextUrl.origin}/api/attendance/punch`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json', Cookie: req.headers.get('cookie') ?? '' },
+          body:    JSON.stringify({ type: 'break_end' }),
+        })
+        const data = await res.json()
+        logVoiceAudit({ source: 'jarvis_voice', actor: uid, actorType: 'worker',
+          companyId: profile.company_id, action, safetyLevel: level,
+          confirmed: true, result: res.ok ? 'success' : 'failed', reason: data.error })
+        if (!res.ok) {
+          const msg = data.error === 'no_break_started' ? '休憩が開始されていません。' : '休憩終了に失敗しました。'
+          return Response.json({ error: msg }, { status: res.status })
+        }
+        const now = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo' })
+        return Response.json({ success: true, voiceReply: `${now}に休憩を終了しました。お疲れ様です。` })
+      }
+
       // ─── L3: clock_in ─────────────────────────────────────
       // 内部fetchではなくadminClientで直接DB操作（Auth Cookie問題を回避）
       case 'system.clock_in': {

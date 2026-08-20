@@ -135,6 +135,14 @@ export const SYSTEM_ACTIONS = {
     level: 3 as const,
     description: '勤怠打刻：退勤を記録する',
   },
+  'system.break_start': {
+    level: 3 as const,
+    description: '勤怠打刻：休憩開始を記録する',
+  },
+  'system.break_end': {
+    level: 3 as const,
+    description: '勤怠打刻：休憩終了を記録する',
+  },
   'system.mark_notification_read': {
     level: 3 as const,
     description: '通知を既読にする',
