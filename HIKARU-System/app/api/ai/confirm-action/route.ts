@@ -434,6 +434,25 @@ export async function POST(req: NextRequest) {
         return Response.json({ success: true, voiceReply: '経費申請を提出しました。' })
       }
 
+      // ─── L4: withdraw_expense ─────────────────────────────
+      case 'system.withdraw_expense': {
+        const { expenseId } = params
+        if (!expenseId) return Response.json({ error: 'expenseId required' }, { status: 400 })
+        const res = await fetch(`${req.nextUrl.origin}/api/expenses/${expenseId}/withdraw`, {
+          method:  'POST',
+          headers: { Cookie: req.headers.get('cookie') ?? '' },
+        })
+        const data = await res.json()
+        logVoiceAudit({
+          source: 'jarvis_voice', actor: uid, actorType: 'worker',
+          companyId: profile.company_id, action, safetyLevel: level,
+          confirmed: true, result: res.ok ? 'success' : 'failed',
+          resourceType: 'expense', resourceId: expenseId,
+        })
+        if (!res.ok) return Response.json({ error: data?.error ?? '取り下げに失敗しました。' }, { status: res.status })
+        return Response.json({ success: true, voiceReply: '経費申請を取り下げました。下書きに戻りました。' })
+      }
+
       // ─── L3: mark_notification_read ───────────────────────
       case 'system.mark_notification_read': {
         const { notificationId } = params

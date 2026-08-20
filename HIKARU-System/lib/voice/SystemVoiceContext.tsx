@@ -58,6 +58,7 @@ job_manual=マニュアル, job_report=報告書
 - system.start_job     作業開始（params: { projectId: "実ID" }）
 - system.complete_job  作業完了（params: { projectId: "実ID" }）
 - system.submit_expense 経費申請（params: { expenseId: "実ID" }）
+- system.withdraw_expense 経費取り下げ（params: { expenseId: "実ID" }）申請中のみ
 - system.mark_notification_read 通知既読（params: { notificationId: "実ID" }）
 
 ## 案件操作完全フロー
@@ -72,8 +73,16 @@ job_manual=マニュアル, job_report=報告書
 ## 追加ツール
 - get_job_details: 案件詳細・作業状態・写真進捗を取得。projectId省略時は現在ページを使用。
 - run_quality_evaluation: AI品質評価を実行。jobIdが必要。get_active_jobで取得。
+- get_expense_detail: 経費詳細確認。expenseId省略時は現在ページから自動取得。
 - create_expense_draft: 経費下書き作成。amount/categoryが必要。ユーザーへ確認後に呼ぶ。
 - generate_report: AI品質報告書を生成。jobIdが必要。
+
+## 経費操作フロー
+「経費一覧教えて」→ get_expense_summary → 一覧発話(IDを含む)
+「1件目詳細見せて」→ get_expense_detail(expenseId=取得したID) → 詳細発話
+「これを申請して」→ get_current_context→expenseId確認 → 「申請します？」→ execute_confirmed_action(submit_expense)
+「取り下げたい」→ get_current_context→expenseId確認 → 「取り下げます？」→ execute_confirmed_action(withdraw_expense)
+「経費を登録したい」→ get_expense_detailは不要。「何の経費ですか？」→「金額は？」→ Confirmation → create_expense_draft
 
 ## Context解決ルール（ID取得の順序）
 ユーザーが「この作業」「今の案件」等と言った場合:
@@ -113,11 +122,18 @@ function buildHikaruRealtimeTools(
       execute:     async () => {
         const path      = pathnameRef.current
         const projectId = projectIdRef.current
-        const isJobPage = path?.startsWith('/jobs/') && projectId
-        if (isJobPage) {
-          return `現在 /jobs/${projectId} を表示中。currentProjectId=${projectId}。start_jobまたはcomplete_jobのparamsに{ projectId: "${projectId}" }を使用。`
+        // /jobs/[id]/... ページ
+        const jobMatch = path?.match(/^\/jobs\/([^/]+)/)
+        if (jobMatch) {
+          const pid = jobMatch[1]
+          return `現在 ${path} を表示中。currentProjectId=${pid}。start_job/complete_jobのparamsに{ projectId: "${pid}" }を使用。`
         }
-        return `現在 ${path || '/home'} を表示中。案件ページではありません。案件操作にはget_today_jobsで一覧を取得してください。`
+        // /expenses/[id] ページ
+        const expenseMatch = path?.match(/^\/expenses\/([^/]+)$/)
+        if (expenseMatch) {
+          return `現在 /expenses/${expenseMatch[1]} を表示中。currentExpenseId=${expenseMatch[1]}。submit_expense/withdraw_expenseのparamsに{ expenseId: "${expenseMatch[1]}" }を使用。`
+        }
+        return `現在 ${path || '/home'} を表示中。`
       },
     }),
     toolFactory({
@@ -170,10 +186,57 @@ function buildHikaruRealtimeTools(
         const data = await apiFetch('/api/expenses')
         if (!data) return '経費情報を取得できませんでした。'
         const items = Array.isArray(data?.data) ? data.data : []
+        const CATEGORY: Record<string, string> = {
+          transport: '交通費', parking: '駐車場代', supplies: '備品', consumables: '消耗品', other: 'その他',
+        }
+        const STATUS: Record<string, string> = {
+          draft: '下書き', submitted: '申請中', approved: '承認済み',
+          rejected: '却下', settled: '精算済み', withdrawn: '取り下げ',
+        }
+        if (items.length === 0) return '経費はありません。'
         const drafts = items.filter((e: any) => e.status === 'draft')
-        if (drafts.length === 0) return '提出可能な経費申請はありません。'
-        const list = drafts.slice(0, 3).map((e: any, i: number) => `${i + 1}: ${e.title ?? `¥${e.amount}`} [id:${e.id}]`).join(', ')
-        return `提出可能な経費申請${drafts.length}件。${list}`
+        const submitted = items.filter((e: any) => e.status === 'submitted')
+        const list = items.slice(0, 5).map((e: any, i: number) =>
+          `${i + 1}: ${CATEGORY[e.category] ?? e.category} ¥${e.amount} (${STATUS[e.status] ?? e.status}) [id:${e.id}]`
+        ).join(', ')
+        return `経費${items.length}件（下書き${drafts.length}件・申請中${submitted.length}件）。${list}`
+      },
+    }),
+    toolFactory({
+      // 経費詳細取得 — 特定経費の詳細を確認する
+      name:        'get_expense_detail',
+      description: '特定の経費の詳細を取得する。expenseId省略時は現在ページから自動取得。',
+      parameters:  {
+        type:       'object',
+        properties: { expenseId: { type: 'string' } },
+        required:             [],
+        additionalProperties: false,
+      },
+      execute: async (input: any) => {
+        const { expenseId } = input ?? {}
+        // 現在URLから expenseId を取得
+        const pathMatch = pathnameRef.current?.match(/^\/expenses\/([^/]+)$/)
+        const eid = expenseId || pathMatch?.[1]
+        if (!eid) return '経費詳細を確認するにはexpenseIdが必要です。経費一覧を開いてご確認ください。'
+        const res = await fetch(`/api/expenses/${eid}`, { credentials: 'include' })
+        if (!res.ok) return '経費情報を取得できませんでした。'
+        const { expense } = await res.json()
+        if (!expense) return '経費が見つかりませんでした。'
+        const CATEGORY: Record<string, string> = {
+          transport: '交通費', parking: '駐車場代', supplies: '備品', consumables: '消耗品', other: 'その他',
+        }
+        const STATUS: Record<string, string> = {
+          draft: '下書き', submitted: '申請中', approved: '承認済み',
+          rejected: '却下', settled: '精算済み', withdrawn: '取り下げ',
+        }
+        const desc = expense.description ? `内容:${expense.description}。` : ''
+        const project = expense.projects?.name ? `案件:${expense.projects.name}。` : ''
+        const actionHint = expense.status === 'draft'
+          ? `submit_expenseで申請できます(params:{expenseId:"${eid}"})。`
+          : expense.status === 'submitted'
+          ? `withdraw_expenseで取り下げできます(params:{expenseId:"${eid}"})。`
+          : ''
+        return `${CATEGORY[expense.category] ?? expense.category} ¥${expense.amount}。${expense.expense_date}。${STATUS[expense.status] ?? expense.status}。${desc}${project}${actionHint}`
       },
     }),
     toolFactory({
@@ -217,7 +280,7 @@ function buildHikaruRealtimeTools(
         properties: {
           destination: {
             type: 'string',
-            enum: ['home', 'attendance', 'schedule', 'shifts', 'expenses', 'notifications', 'profile', 'jobs', 'assistant', 'back', 'job_detail', 'job_chat', 'job_manual', 'job_report'],
+            enum: ['home', 'attendance', 'schedule', 'shifts', 'expenses', 'expenses_new', 'notifications', 'profile', 'jobs', 'assistant', 'back', 'job_detail', 'job_chat', 'job_manual', 'job_report'],
           },
           jobId: { type: 'string' },
         },
@@ -228,13 +291,13 @@ function buildHikaruRealtimeTools(
         const { destination, jobId } = input ?? {}
         const NAV: Record<string, string> = {
           home: '/home', attendance: '/attendance', schedule: '/schedule',
-          shifts: '/shifts', expenses: '/expenses', notifications: '/notifications',
-          profile: '/profile', jobs: '/jobs', assistant: '/assistant',
+          shifts: '/shifts', expenses: '/expenses', expenses_new: '/expenses/new',
+          notifications: '/notifications', profile: '/profile', jobs: '/jobs', assistant: '/assistant',
         }
         const LABELS: Record<string, string> = {
           home: 'ホーム', attendance: '勤怠管理', schedule: 'スケジュール',
-          shifts: 'シフト管理', expenses: '経費申請', notifications: '通知',
-          profile: 'プロフィール', jobs: '案件一覧', assistant: 'アシスタント',
+          shifts: 'シフト管理', expenses: '経費申請', expenses_new: '経費新規登録',
+          notifications: '通知', profile: 'プロフィール', jobs: '案件一覧', assistant: 'アシスタント',
         }
         console.log('[JARVIS-nav] tool_called navigate_to', Date.now())
         console.log('[JARVIS-nav] destination', destination)
@@ -284,7 +347,8 @@ function buildHikaruRealtimeTools(
               'system.clock_in', 'system.clock_out',
               'system.break_start', 'system.break_end',
               'system.start_job', 'system.complete_job',
-              'system.submit_expense', 'system.mark_notification_read',
+              'system.submit_expense', 'system.withdraw_expense',
+              'system.mark_notification_read',
             ],
           },
           params: {

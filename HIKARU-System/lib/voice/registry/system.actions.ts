@@ -159,6 +159,10 @@ export const SYSTEM_ACTIONS = {
     level: 4 as const,
     description: '経費申請を提出する',
   },
+  'system.withdraw_expense': {
+    level: 4 as const,
+    description: '申請中の経費申請を取り下げる（下書きに戻す）',
+  },
 } as const
 
 export type SystemActionName = keyof typeof SYSTEM_ACTIONS
