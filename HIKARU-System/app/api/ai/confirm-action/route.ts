@@ -185,7 +185,7 @@ export async function POST(req: NextRequest) {
 
         const { data: job } = await adminClient
           .from('jobs')
-          .select('id, status, worker_id, company_id')
+          .select('id, status, worker_id, company_id, project_id')
           .eq('id', resolvedJobId!)
           .eq('worker_id', uid)
           .eq('company_id', profile.company_id)
@@ -209,6 +209,31 @@ export async function POST(req: NextRequest) {
           return Response.json({ error: `作業状態が「進行中」ではありません（現在: ${job.status}）。` }, { status: 400 })
         }
 
+        // 写真必須チェック（通常UI job detail pageと同一条件）
+        const { data: photoSpots } = await adminClient
+          .from('photo_spots')
+          .select('id, is_required')
+          .eq('project_id', (job as any).project_id ?? projectId)
+        const requiredSpots = (photoSpots ?? []).filter((s: any) => s.is_required)
+        if (requiredSpots.length > 0) {
+          const { data: photos } = await adminClient
+            .from('photos')
+            .select('spot_id, photo_type')
+            .eq('job_id', resolvedJobId!)
+          const completedRequired = requiredSpots.filter((s: any) => {
+            const hasBefore = (photos ?? []).some((p: any) => p.spot_id === s.id && p.photo_type === 'before')
+            const hasAfter  = (photos ?? []).some((p: any) => p.spot_id === s.id && p.photo_type === 'after')
+            return hasBefore && hasAfter
+          })
+          if (completedRequired.length < requiredSpots.length) {
+            const missing = requiredSpots.length - completedRequired.length
+            return Response.json({
+              error: `必須撮影箇所があと${missing}件あります。Before・After写真を撮影してから完了してください。`,
+              photoRequired: true,
+            }, { status: 400 })
+          }
+        }
+
         const { data: updated, error } = await supabase
           .from('jobs')
           .update({ status: 'completed', completed_at: new Date().toISOString() })
@@ -224,7 +249,7 @@ export async function POST(req: NextRequest) {
           resourceType: 'job', resourceId: resolvedJobId,
         })
         if (error) return Response.json({ error: '完了処理に失敗しました。' }, { status: 500 })
-        return Response.json({ success: true, job: updated, voiceReply: '作業を完了しました。お疲れさまでした。' })
+        return Response.json({ success: true, job: updated, voiceReply: '作業を完了しました。お疲れさまでした。報告書を生成しますか？' })
       }
 
       // ─── L3: break_start ──────────────────────────────────

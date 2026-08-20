@@ -60,15 +60,27 @@ job_manual=マニュアル, job_report=報告書
 - system.submit_expense 経費申請（params: { expenseId: "実ID" }）
 - system.mark_notification_read 通知既読（params: { notificationId: "実ID" }）
 
-## 経費・報告書の追加ツール
+## 案件操作完全フロー
+「今日の案件教えて」→ get_today_jobs呼ぶ → 一覧を読み上げ
+「1件目開いて」→ navigate_to(job_detail, jobId=取得したID)
+「詳細教えて」→ get_job_details(projectId) → 詳細を読み上げ
+「この作業開始して」→ get_current_context → projectId確認 → 「開始します？」→ execute_confirmed_action(start_job) → 開始成功後「Before画面を開きますか？」
+「品質評価して」→ get_active_job(projectId) → jobId取得 → 「評価を実行します？」→ run_quality_evaluation(jobId) → 結果読み上げ
+「作業完了して」→ get_current_context → 「完了します？」→ execute_confirmed_action(complete_job) → 完了後「報告書を生成しますか？」
+「報告書作って」→ get_active_job(projectId) → jobId取得 → generate_report(jobId) → 生成結果発話
+
+## 追加ツール
+- get_job_details: 案件詳細・作業状態・写真進捗を取得。projectId省略時は現在ページを使用。
+- run_quality_evaluation: AI品質評価を実行。jobIdが必要。get_active_jobで取得。
 - create_expense_draft: 経費下書き作成。amount/categoryが必要。ユーザーへ確認後に呼ぶ。
-- generate_report: AI品質報告書を生成。jobIdが必要。作業完了後に呼べる。
+- generate_report: AI品質報告書を生成。jobIdが必要。
 
 ## Context解決ルール（ID取得の順序）
 ユーザーが「この作業」「今の案件」等と言った場合:
 1. まず get_current_context を呼んでcurrentProjectIdを確認
 2. projectIdがあれば案件名をユーザーに確認する
 3. projectIdがなければ get_today_jobs で一覧取得してユーザーに選ばせる
+jobIdが必要な場合（complete_job等）: get_active_jobでjobIdを取得する
 IDを推測・捏造しない。必ずツールで取得した実IDを使う。
 
 ## 勤怠操作フロー例
@@ -306,6 +318,68 @@ function buildHikaruRealtimeTools(
         } catch (e) {
           console.error('[JARVIS-action] confirm-action error:', e)
           return '実行中にエラーが発生しました。'
+        }
+      },
+    }),
+    toolFactory({
+      // 案件詳細取得 — プロジェクト情報・作業状態・写真進捗を一度に取得
+      name:        'get_job_details',
+      description: '案件の詳細情報・作業状態・写真撮影進捗を取得する。projectId省略時は現在ページから自動取得。',
+      parameters:  {
+        type:       'object',
+        properties: { projectId: { type: 'string' } },
+        required:             [],
+        additionalProperties: false,
+      },
+      execute: async (input: any) => {
+        const { projectId } = input ?? {}
+        const pid = projectId || projectIdRef.current
+        if (!pid) return '案件ページを開いてから詳細を確認してください。'
+        const res = await fetch(`/api/jobs/${pid}`, { credentials: 'include', cache: 'no-store' })
+        if (!res.ok) return '案件情報を取得できませんでした。'
+        const { project, photoSpots, todayJob, photos } = await res.json()
+        if (!project) return '案件が見つかりませんでした。'
+        const statusLabel = !todayJob ? '未着手' : todayJob.status === 'completed' ? '完了済み' : `作業中(jobId:${todayJob.id})`
+        let photoInfo = ''
+        if (photoSpots?.length > 0) {
+          const spots = photoSpots as any[]
+          const ph = photos as any[] ?? []
+          const bef = spots.filter((s: any) => ph.some((p: any) => p.spot_id === s.id && p.photo_type === 'before')).length
+          const aft = spots.filter((s: any) => ph.some((p: any) => p.spot_id === s.id && p.photo_type === 'after')).length
+          const req = spots.filter((s: any) => s.is_required).length
+          photoInfo = `撮影箇所${spots.length}件(必須${req}件)。Before${bef}/${spots.length}、After${aft}/${spots.length}完了。`
+        }
+        return `案件「${project.name}」。現場:${project.location_name ?? '-'}。状態:${statusLabel}。${photoInfo}${project.notes ? `注意:${project.notes}` : ''}`
+      },
+    }),
+    toolFactory({
+      // AI品質評価実行 — Before/After写真が揃った後にAI評価を実行する
+      name:        'run_quality_evaluation',
+      description: '写真をAIで品質評価する。Before/After写真を撮影後に実行。jobIdが必要(get_active_jobで取得)。',
+      parameters:  {
+        type:       'object',
+        properties: { jobId: { type: 'string' } },
+        required:             ['jobId'],
+        additionalProperties: false,
+      },
+      execute: async (input: any) => {
+        const { jobId } = input ?? {}
+        if (!jobId) return 'jobIdが必要です。get_active_jobで取得してください。'
+        console.log('[JARVIS-action] run_quality_evaluation:', jobId)
+        try {
+          const res = await fetch('/api/ai/quality', {
+            method:      'POST',
+            headers:     { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body:        JSON.stringify({ action: 'evaluate-all', jobId }),
+          })
+          const data = await res.json()
+          if (!data.success) return `品質評価に失敗しました: ${data.error?.message ?? 'エラー'}`
+          const s = data.summary
+          const allPassed = s?.allPassed
+          return `AI品質評価が完了しました。平均スコア${s?.averageScore ?? '-'}点。合格${s?.passed ?? 0}/${s?.total ?? 0}箇所。${allPassed ? '全箇所合格です！報告書を生成しますか？' : '要改善箇所があります。再清掃が必要かもしれません。'}`
+        } catch {
+          return '品質評価の実行中にエラーが発生しました。'
         }
       },
     }),
