@@ -2,6 +2,7 @@
 // ============================================================
 // SystemVoiceContext — System (Worker) Persistent Voice Provider
 // WorkerLayoutに1つだけ配置。ページ遷移後もSessionを維持する。
+// Realtime(WebRTC)を標準Voice Engine。失敗時はBrowser STTへfallback。
 // useSystemJarvis() で各Pageから消費する。
 // ============================================================
 
@@ -14,6 +15,179 @@ import type {
   VoiceMode, ConversationContext, LastResultData, VoiceSettings, PendingConfirmation,
 } from '@/lib/voice/state/types'
 import type { SystemActionName } from '@/lib/voice/registry/system.actions'
+
+// ─── Realtime 定数 ────────────────────────────────────────────
+const RT_MODEL = 'gpt-4o-realtime-preview'
+
+const RT_SYSTEM_PROMPT = `あなたはHIKARU Workerアシスタント「JARVIS」です。
+清掃業務に携わる従業員の音声アシスタントとして、自然な日本語で業務をサポートします。
+回答は2〜3文以内で音声向けに簡潔に。
+
+## Write操作（最重要ルール）
+打刻・作業開始・完了・経費申請等のWrite操作は必ずユーザーの確認を取ってから execute_confirmed_action を呼ぶ。
+確認なしに実行ツールを呼ばない。
+
+確認フロー:
+1. 「出勤を打刻します。よろしいですか？」と聞く
+2. ユーザーが「はい」等と答える
+3. execute_confirmed_action({ action: 'system.clock_in', params: {} }) を呼ぶ
+4. Tool結果が success なら時刻を発話。失敗なら「打刻できませんでした」と正確に伝える。
+
+## actionとparamsの対応
+- system.clock_in       出勤打刻（params: {}）
+- system.clock_out      退勤打刻（params: {}）
+- system.start_job      作業開始（params: { projectId }）
+- system.complete_job   作業完了（params: { jobId } or { projectId }）
+- system.submit_expense 経費申請（params: { expenseId }）
+- system.mark_notification_read 通知既読（params: { notificationId }）`
+
+// ─── Realtime Tools（ブラウザ側。credentials: 'include' でAuth）─
+function buildHikaruRealtimeTools(
+  router:      ReturnType<typeof useRouter>,
+  projectIdRef: React.MutableRefObject<string | undefined>,
+) {
+  const apiFetch = async (path: string) => {
+    const res = await fetch(path, { credentials: 'include' })
+    if (!res.ok) return null
+    return res.json()
+  }
+
+  return [
+    {
+      name:        'get_today_jobs',
+      description: '今日の担当作業・案件一覧とIDを取得する',
+      parameters:  { type: 'object', properties: {}, required: [] },
+      execute:     async () => {
+        const data = await apiFetch('/api/home/data')
+        if (!data) return '今日の作業情報を取得できませんでした。'
+        const ps: Array<{ id: string; name: string }> = data.projects ?? []
+        if (ps.length === 0) return '今日の担当作業はありません。'
+        const list = ps.slice(0, 5).map((p, i) => `${i + 1}件目: ${p.name} [id:${p.id}]`).join(', ')
+        return `今日は${ps.length}件あります。${list}`
+      },
+    },
+    {
+      name:        'get_notifications',
+      description: '通知・未読件数とIDを確認する',
+      parameters:  { type: 'object', properties: {}, required: [] },
+      execute:     async () => {
+        const data = await apiFetch('/api/notifications')
+        if (!data) return '通知を取得できませんでした。'
+        const list = Array.isArray(data?.data) ? data.data : []
+        const unread = list.filter((n: any) => !n.is_read)
+        if (unread.length === 0) return '未読の通知はありません。'
+        const items = unread.slice(0, 3).map((n: any, i: number) => `${i + 1}: ${n.title ?? '通知'} [id:${n.id}]`).join(', ')
+        return `未読${unread.length}件。${items}`
+      },
+    },
+    {
+      name:        'get_attendance',
+      description: '今日の勤怠・打刻状況を確認する',
+      parameters:  { type: 'object', properties: {}, required: [] },
+      execute:     async () => {
+        const data = await apiFetch('/api/attendance')
+        if (!data) return '勤怠情報を取得できませんでした。'
+        const items = Array.isArray(data?.data) ? data.data : []
+        const today = items[0] as any
+        if (!today) return '本日の勤怠記録はありません。'
+        const ci = today.clock_in  ? new Date(today.clock_in).toLocaleTimeString('ja-JP',  { hour: '2-digit', minute: '2-digit' }) : '未'
+        const co = today.clock_out ? new Date(today.clock_out).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '未'
+        return `本日: 出勤${ci} / 退勤${co}。`
+      },
+    },
+    {
+      name:        'get_expense_summary',
+      description: '提出可能な経費申請（下書き）一覧とIDを確認する',
+      parameters:  { type: 'object', properties: {}, required: [] },
+      execute:     async () => {
+        const data = await apiFetch('/api/expenses')
+        if (!data) return '経費情報を取得できませんでした。'
+        const items = Array.isArray(data?.data) ? data.data : []
+        const drafts = items.filter((e: any) => e.status === 'draft')
+        if (drafts.length === 0) return '提出可能な経費申請はありません。'
+        const list = drafts.slice(0, 3).map((e: any, i: number) => `${i + 1}: ${e.title ?? `¥${e.amount}`} [id:${e.id}]`).join(', ')
+        return `提出可能な経費申請${drafts.length}件。${list}`
+      },
+    },
+    {
+      name:        'get_active_job',
+      description: '今日の進行中作業のjobIdを取得する（complete_jobで必要）',
+      parameters:  { type: 'object', properties: { projectId: { type: 'string' } }, required: [] },
+      execute:     async ({ projectId }: { projectId?: string }) => {
+        const pid   = projectId || projectIdRef.current
+        const today = new Date().toISOString().split('T')[0]
+        const path  = pid ? `/api/jobs?projectId=${pid}&status=in_progress&date=${today}` : `/api/jobs?status=in_progress&date=${today}`
+        const data  = await apiFetch(path)
+        const jobs  = Array.isArray(data?.data) ? data.data : []
+        const active = jobs.filter((j: any) => j.status === 'in_progress')
+        if (active.length === 0) return '進行中の作業はありません。作業を開始してください。'
+        return `進行中の作業 [jobId:${active[0].id}]。complete_jobのparamsにjobIdとして使用。`
+      },
+    },
+    {
+      name:        'get_schedule',
+      description: '今後のスケジュールを確認する',
+      parameters:  { type: 'object', properties: {}, required: [] },
+      execute:     async () => {
+        const data = await apiFetch('/api/schedule')
+        if (!data) return 'スケジュールを取得できませんでした。'
+        const items = Array.isArray(data?.data) ? data.data : []
+        return items.length === 0 ? '今後の予定はありません。' : `スケジュールに${items.length}件の予定があります。`
+      },
+    },
+    {
+      name:        'navigate',
+      description: '指定のページへ移動する',
+      parameters:  {
+        type:       'object',
+        properties: {
+          path:      { type: 'string', description: '/home, /jobs, /jobs/[jobId], /attendance, /expenses, /notifications, /schedule, /shifts, /profile 等' },
+          projectId: { type: 'string', description: '案件ページへ移動する場合の案件ID' },
+        },
+        required: ['path'],
+      },
+      execute: async ({ path, projectId }: { path: string; projectId?: string }) => {
+        const target = projectId ? path.replace('[jobId]', projectId).replace('[id]', projectId) : path
+        router.push(target)
+        return `${target}へ移動します。`
+      },
+    },
+    {
+      name:        'execute_confirmed_action',
+      description: 'ユーザーが「はい」と明確に確認した後にのみ呼ぶ。Server Auth再検証して実行する。',
+      parameters:  {
+        type:       'object',
+        properties: {
+          action: {
+            type: 'string',
+            enum: ['system.clock_in', 'system.clock_out', 'system.start_job', 'system.complete_job', 'system.submit_expense', 'system.mark_notification_read'],
+            description: '実行するAction名',
+          },
+          params: {
+            type:                 'object',
+            additionalProperties: { type: 'string' },
+            description:          'jobId / projectId / expenseId / notificationId 等',
+          },
+        },
+        required: ['action'],
+      },
+      execute: async ({ action, params = {} }: { action: string; params?: Record<string, string> }) => {
+        try {
+          const res = await fetch('/api/ai/confirm-action', {
+            method:      'POST',
+            headers:     { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body:        JSON.stringify({ action, params, safetyLevel: 3, expiresAt: Date.now() + 90_000 }),
+          })
+          const data = await res.json()
+          return res.ok ? (data.voiceReply ?? '完了しました。') : (data.error ?? '実行に失敗しました。')
+        } catch {
+          return '実行中にエラーが発生しました。'
+        }
+      },
+    },
+  ]
+}
 
 // ─── STT型補完 ───────────────────────────────────────────────
 interface SpeechRecognitionEvent extends Event {
@@ -93,30 +267,34 @@ function saveVoiceSettings(s: VoiceSettings): void {
 }
 
 // ─── Voice Engine Mode ────────────────────────────────────────
-// 'browser' = Browser STT + HTTP Agent + Browser TTS（デフォルト）
-// 'realtime' = WebRTC Realtime（開いている場合はこちらが主経路）
-export type VoiceEngineMode = 'browser' | 'realtime'
+// 'realtime'            = WebRTC Realtime（標準経路）
+// 'realtime-connecting' = Realtime 接続試行中
+// 'browser'             = Browser STT fallback
+// 'off'                 = Session 未開始
+export type VoiceEngineMode = 'realtime' | 'realtime-connecting' | 'browser' | 'off'
 
 // ─── Context型 ───────────────────────────────────────────────
 export interface SystemVoiceContextValue {
-  mode:              VoiceMode
-  isSession:         boolean
-  isStandby:         boolean
-  transcript:        string
-  response:          string
-  errorMessage:      string
-  messages:          SystemVoiceChatMessage[]
-  voiceSettings:     VoiceSettings
-  setVoiceSettings:  (s: VoiceSettings) => void
-  isSpeechSupported: boolean
-  voiceEngineMode:   VoiceEngineMode
+  mode:               VoiceMode
+  isSession:          boolean
+  isStandby:          boolean
+  transcript:         string
+  response:           string
+  errorMessage:       string
+  messages:           SystemVoiceChatMessage[]
+  voiceSettings:      VoiceSettings
+  setVoiceSettings:   (s: VoiceSettings) => void
+  isSpeechSupported:  boolean
+  voiceEngineMode:    VoiceEngineMode
   setVoiceEngineMode: (m: VoiceEngineMode) => void
-  startListening:    () => void
-  stopAll:           () => void
-  startSession:      () => void
-  stopSession:       () => void
-  handleUtterance:   (text: string) => Promise<void>
-  currentProjectId:  string | undefined
+  connectRealtime:    () => void
+  disconnectRealtime: () => void
+  startListening:     () => void
+  stopAll:            () => void
+  startSession:       () => void
+  stopSession:        () => void
+  handleUtterance:    (text: string) => Promise<void>
+  currentProjectId:   string | undefined
 }
 
 const SystemVoiceContext = React.createContext<SystemVoiceContextValue | null>(null)
@@ -270,7 +448,13 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
   const [isSession,       setIsSession]        = React.useState(false)
   const [isStandby,       setIsStandby]        = React.useState(false)
   const [voiceSettings,   setVoiceSettingsSt]  = React.useState<VoiceSettings>(DEFAULT_VOICE_SETTINGS)
-  const [voiceEngineMode, setVoiceEngineMode]  = React.useState<VoiceEngineMode>('browser')
+  const [voiceEngineMode, setVoiceEngineMode]  = React.useState<VoiceEngineMode>('off')
+
+  // ─── Realtime refs ────────────────────────────────────────────
+  const realtimeSessionRef    = React.useRef<any>(null)
+  const voiceEngineModeRef    = React.useRef<VoiceEngineMode>('off')
+
+  React.useEffect(() => { voiceEngineModeRef.current = voiceEngineMode }, [voiceEngineMode])
 
   // localStorage から設定をロード（クライアントサイドのみ）
   React.useEffect(() => { setVoiceSettingsSt(loadVoiceSettings()) }, [])
@@ -363,6 +547,12 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     browserTTS.stop()
     setModeSync('idle')
     setErrorMessage('')
+    // Realtime も切断
+    try { realtimeSessionRef.current?.close?.() }      catch {}
+    try { realtimeSessionRef.current?.disconnect?.() } catch {}
+    realtimeSessionRef.current = null
+    setVoiceEngineMode('off')
+    voiceEngineModeRef.current = 'off'
   }, [clearActivityTimers, setModeSync])
 
   const stopSession = React.useCallback(() => {
@@ -374,6 +564,12 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     browserTTS.stop()
     setModeSync('idle')
     setErrorMessage('')
+    // Realtime も切断
+    try { realtimeSessionRef.current?.close?.() }      catch {}
+    try { realtimeSessionRef.current?.disconnect?.() } catch {}
+    realtimeSessionRef.current = null
+    setVoiceEngineMode('off')
+    voiceEngineModeRef.current = 'off'
   }, [clearActivityTimers, setModeSync])
 
   const finishWithError = React.useCallback((msg: string) => {
@@ -639,7 +835,92 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     }
   }, [executeAction, finishWithError, addMessage, speakAndMaybeResume, clearActivityTimers, scheduleStandby, setModeSync])
 
+  // ─── Realtime 接続（Provider レベルで1つだけ持続）───────────────
+  const connectRealtime = React.useCallback(async () => {
+    if (realtimeSessionRef.current) return
+    if (voiceEngineModeRef.current === 'realtime-connecting') return
+
+    setVoiceEngineMode('realtime-connecting')
+    voiceEngineModeRef.current = 'realtime-connecting'
+
+    try {
+      const tokenRes = await fetch('/api/ai/realtime-token', {
+        method:      'POST',
+        headers:     { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body:        JSON.stringify({ model: RT_MODEL }),
+      })
+      if (!tokenRes.ok) throw new Error('token_failed')
+      const { clientSecret } = await tokenRes.json()
+      if (!clientSecret) throw new Error('no_token')
+
+      const { RealtimeAgent, RealtimeSession } = await import('@openai/agents/realtime') as any
+      const tools   = buildHikaruRealtimeTools(router, projectIdRef)
+      const agent   = new RealtimeAgent({ name: 'JARVIS Worker Realtime', instructions: RT_SYSTEM_PROMPT, model: RT_MODEL, tools })
+      const session = new RealtimeSession(agent, { model: RT_MODEL })
+
+      session.on?.('connected', () => {
+        setVoiceEngineMode('realtime')
+        voiceEngineModeRef.current = 'realtime'
+        setModeSync('listening')
+      })
+      session.on?.('disconnected', () => {
+        realtimeSessionRef.current = null
+        if (isSessionRef.current) {
+          setVoiceEngineMode('browser')
+          voiceEngineModeRef.current = 'browser'
+          addMessage('assistant', '接続を切り替えました。そのまま話してください。')
+          setTimeout(() => { if (isSessionRef.current && voiceEngineModeRef.current === 'browser') startListeningRef.current() }, 800)
+        } else {
+          setVoiceEngineMode('off')
+          voiceEngineModeRef.current = 'off'
+          setModeSync('idle')
+        }
+      })
+      session.on?.('error', () => {
+        realtimeSessionRef.current = null
+        setVoiceEngineMode('browser')
+        voiceEngineModeRef.current = 'browser'
+        if (isSessionRef.current) startListeningRef.current()
+      })
+      session.on?.('agent_start_speech',  () => { if (voiceEngineModeRef.current === 'realtime') setModeSync('speaking') })
+      session.on?.('agent_end_speech',    () => { if (voiceEngineModeRef.current === 'realtime') setModeSync('listening') })
+      session.on?.('user_start_speech',   () => { if (voiceEngineModeRef.current === 'realtime') setModeSync('listening') })
+      session.on?.('user_end_speech',     () => { if (voiceEngineModeRef.current === 'realtime') setModeSync('processing') })
+      // Tool実行中は 'working' へ
+      session.on?.('tool_call_start',     () => { if (voiceEngineModeRef.current === 'realtime') setModeSync('working') })
+      session.on?.('tool_call_end',       () => { if (voiceEngineModeRef.current === 'realtime') setModeSync('processing') })
+
+      // 発話テキスト → messages に反映
+      session.on?.('user_transcription_done',  (text: string) => {
+        if (text?.trim()) { setTranscript(text.trim()); addMessage('user', text.trim()) }
+      })
+      session.on?.('agent_transcription_done', (text: string) => {
+        if (text?.trim()) { setResponse(text.trim()); addMessage('assistant', text.trim()) }
+      })
+
+      await session.connect({ apiKey: clientSecret })
+      realtimeSessionRef.current = session
+
+    } catch (err) {
+      console.error('[realtime-connect]', err)
+      setVoiceEngineMode('browser')
+      voiceEngineModeRef.current = 'browser'
+      if (isSessionRef.current) setTimeout(() => startListeningRef.current(), 400)
+    }
+  }, [router, addMessage, setModeSync])
+
+  const disconnectRealtime = React.useCallback(() => {
+    try { realtimeSessionRef.current?.close?.() } catch {}
+    try { realtimeSessionRef.current?.disconnect?.() } catch {}
+    realtimeSessionRef.current = null
+    setVoiceEngineMode('off')
+    voiceEngineModeRef.current = 'off'
+  }, [])
+
   const startListening = React.useCallback(() => {
+    // Realtime が接続中または接続試行中ならスキップ（Realtime が Audio を管理）
+    if (voiceEngineModeRef.current === 'realtime' || voiceEngineModeRef.current === 'realtime-connecting') return
     if (!isSpeechSupported) { finishWithError('このブラウザでは音声入力を利用できません。'); return }
     if (modeRef.current === 'speaking') { browserTTS.stop(); setModeSync('idle'); return }
     if (modeRef.current === 'processing') return
@@ -701,13 +982,13 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
   React.useEffect(() => { startListeningRef.current = startListening }, [startListening])
 
   const startSession = React.useCallback(() => {
-    if (!isSpeechSupported) { finishWithError('このブラウザでは音声入力を利用できません。'); return }
     isSessionRef.current = true
     setIsSession(true)
     setIsStandby(false)
     scheduleStandby()
-    startListeningRef.current()
-  }, [isSpeechSupported, finishWithError, scheduleStandby])
+    // Realtime（WebRTC）を優先接続。失敗時はBrowser STTへ自動fallback。
+    connectRealtime()
+  }, [scheduleStandby, connectRealtime])
 
   // ─── Phase P2: ページ遷移後の自然な次Action提案 ──────────────
   const prevPathRef = React.useRef(pathname)
@@ -785,12 +1066,14 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     mode, isSession, isStandby, transcript, response, errorMessage, messages,
     voiceSettings, setVoiceSettings, isSpeechSupported,
     voiceEngineMode, setVoiceEngineMode,
+    connectRealtime, disconnectRealtime,
     startListening, stopAll, startSession, stopSession, handleUtterance,
     currentProjectId,
   }), [
     mode, isSession, isStandby, transcript, response, errorMessage, messages,
     voiceSettings, setVoiceSettings, isSpeechSupported,
     voiceEngineMode, setVoiceEngineMode,
+    connectRealtime, disconnectRealtime,
     startListening, stopAll, startSession, stopSession, handleUtterance,
     currentProjectId,
   ])

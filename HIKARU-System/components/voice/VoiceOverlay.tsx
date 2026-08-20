@@ -11,10 +11,11 @@ interface VoiceOverlayProps {
 }
 
 const STATE_CONFIG: Record<VoiceMode, { icon: React.ElementType; label: string; subLabel?: string; animate?: string }> = {
-  idle:       { icon: Mic,        label: 'ウェイク中' },
-  listening:  { icon: Mic,        label: '聞いています…',   subLabel: '話してください',    animate: 'animate-pulse' },
-  processing: { icon: Loader2,    label: 'HIKARUが確認中…', subLabel: '少々お待ちください', animate: 'animate-spin' },
-  speaking:   { icon: Volume2,    label: 'HIKARUが回答中', subLabel: 'もう一度押すとスキップ' },
+  idle:       { icon: Mic,         label: 'ウェイク中' },
+  listening:  { icon: Mic,         label: '聞いています…',   subLabel: '話してください',    animate: 'animate-pulse' },
+  processing: { icon: Loader2,     label: 'HIKARUが確認中…', subLabel: '少々お待ちください', animate: 'animate-spin' },
+  working:    { icon: Loader2,     label: 'HIKARUが実行中…', subLabel: '処理しています',     animate: 'animate-spin' },
+  speaking:   { icon: Volume2,     label: 'HIKARUが回答中',  subLabel: 'もう一度押すとスキップ' },
   error:      { icon: AlertCircle, label: 'エラーが発生しました' },
 }
 

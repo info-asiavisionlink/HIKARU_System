@@ -63,6 +63,15 @@ const MODE_CONFIG: Record<VoiceMode, ModeConfig> = {
     coreBrightness:  '1.6',
     particleOpacity: '1',
   },
+  working: {
+    coreGlow:        `0 0 45px ${COLORS.gold}, 0 0 90px ${COLORS.goldDark}`,
+    ringADuration:   '1.2s',
+    ringBDuration:   '1.8s',
+    ringCDuration:   '3s',
+    pulseDuration:   '0.4s',
+    coreBrightness:  '1.5',
+    particleOpacity: '1',
+  },
   speaking: {
     coreGlow:        `0 0 55px ${COLORS.goldBright}, 0 0 110px ${COLORS.goldBright}`,
     ringADuration:   '3s',

@@ -16,7 +16,7 @@ const GD = 'oklch(0.73 0.12 78 / 0.50)'
 
 export function MiniVoicePanel() {
   const {
-    mode, isSession, isStandby, messages, stopSession,
+    mode, isSession, isStandby, messages, stopSession, voiceEngineMode,
   } = useSystemJarvis()
 
   const pathname  = usePathname()
@@ -26,19 +26,28 @@ export function MiniVoicePanel() {
   if (pathname === '/assistant') return null
   if (!isSession) return null
 
-  const isListening = mode === 'listening'
-  const isSpeaking  = mode === 'speaking'
-  const isProc      = mode === 'processing'
+  const isListening  = mode === 'listening'
+  const isSpeaking   = mode === 'speaking'
+  const isProc       = mode === 'processing'
+  const isWorking    = mode === 'working'
+  const isFallback   = voiceEngineMode === 'browser'
+  const isConnecting = voiceEngineMode === 'realtime-connecting'
 
-  const statusLabel = isStandby  ? 'STANDBY'
-    : isListening                ? 'LISTENING'
-    : isSpeaking                 ? 'SPEAKING'
-    : isProc                     ? 'PROCESSING'
+  const statusLabel = isStandby    ? 'STANDBY'
+    : isConnecting                 ? 'CONNECTING...'
+    : isListening                  ? 'LISTENING'
+    : isSpeaking                   ? 'SPEAKING'
+    : isWorking                    ? 'WORKING'
+    : isProc                       ? 'THINKING'
+    : isFallback                   ? 'FALLBACK'
     : 'ACTIVE'
 
-  const dotColor = isStandby ? GD
-    : isListening             ? '#4ade80'
-    : isSpeaking              ? GB
+  const dotColor = isStandby     ? GD
+    : isConnecting               ? 'oklch(0.70 0.20 55)'
+    : isListening                ? '#4ade80'
+    : isSpeaking                 ? GB
+    : isWorking                  ? 'oklch(0.80 0.18 55)'
+    : isFallback                 ? 'oklch(0.65 0.15 260)'
     : G
 
   const recentMessages = messages.slice(-6)
