@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
     // Server側でprofile取得（claimの検証）
     const { data: profile } = await adminClient
       .from('profiles')
-      .select('company_id, entity_type, entity_id, role')
+      .select('company_id, entity_type, entity_id, role, hourly_rate')
       .eq('id', uid)
       .single()
 
@@ -228,37 +228,125 @@ export async function POST(req: NextRequest) {
       }
 
       // ─── L3: clock_in ─────────────────────────────────────
+      // 内部fetchではなくadminClientで直接DB操作（Auth Cookie問題を回避）
       case 'system.clock_in': {
-        const res = await fetch(`${req.nextUrl.origin}/api/attendance/punch`, {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json', Cookie: req.headers.get('cookie') ?? '' },
-          body:    JSON.stringify({ type: 'clock_in' }),
-        })
-        const data = await res.json()
-        logVoiceAudit({
-          source: 'jarvis_voice', actor: uid, actorType: 'worker',
+        const now   = new Date().toISOString()
+        const today = now.split('T')[0]
+
+        // 今日の打刻記録確認
+        const { data: existing } = await adminClient
+          .from('attendance_records')
+          .select('id, clock_in')
+          .eq('worker_id', uid)
+          .eq('work_date', today)
+          .maybeSingle()
+
+        if (existing?.clock_in) {
+          const alreadyTime = new Date(existing.clock_in).toLocaleTimeString('ja-JP', {
+            hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo',
+          })
+          logVoiceAudit({ source: 'jarvis_voice', actor: uid, actorType: 'worker',
+            companyId: profile.company_id, action, safetyLevel: level,
+            confirmed: true, result: 'success', reason: 'already clocked in' })
+          return Response.json({ success: true, voiceReply: `すでに${alreadyTime}に出勤済みです。` })
+        }
+
+        const hourlyRate = (profile as any)?.hourly_rate ?? 0
+
+        let clockInError: string | undefined
+        if (!existing) {
+          const { error } = await adminClient
+            .from('attendance_records')
+            .insert({
+              worker_id:   uid,
+              company_id:  profile.company_id,
+              work_date:   today,
+              clock_in:    now,
+              hourly_rate: hourlyRate,
+              updated_at:  now,
+            })
+          clockInError = error?.message
+        } else {
+          const { error } = await adminClient
+            .from('attendance_records')
+            .update({ clock_in: now, updated_at: now })
+            .eq('id', existing.id)
+          clockInError = error?.message
+        }
+
+        logVoiceAudit({ source: 'jarvis_voice', actor: uid, actorType: 'worker',
           companyId: profile.company_id, action, safetyLevel: level,
-          confirmed: true, result: res.ok ? 'success' : 'failed',
+          confirmed: true, result: clockInError ? 'failed' : 'success', reason: clockInError })
+
+        if (clockInError) {
+          return Response.json({ error: '出勤打刻に失敗しました。もう一度試してください。' }, { status: 500 })
+        }
+
+        // DB成功確認後にのみ時刻を発話
+        const clockInTime = new Date(now).toLocaleTimeString('ja-JP', {
+          hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo',
         })
-        if (!res.ok) return Response.json({ error: data?.error ?? '出勤打刻に失敗しました。' }, { status: res.status })
-        return Response.json({ success: true, voiceReply: '出勤を記録しました。' })
+        return Response.json({ success: true, voiceReply: `${clockInTime}に出勤を打刻しました。` })
       }
 
       // ─── L3: clock_out ────────────────────────────────────
       case 'system.clock_out': {
-        const res = await fetch(`${req.nextUrl.origin}/api/attendance/punch`, {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json', Cookie: req.headers.get('cookie') ?? '' },
-          body:    JSON.stringify({ type: 'clock_out' }),
-        })
-        const data = await res.json()
-        logVoiceAudit({
-          source: 'jarvis_voice', actor: uid, actorType: 'worker',
+        const now   = new Date().toISOString()
+        const today = now.split('T')[0]
+
+        const { data: existing } = await adminClient
+          .from('attendance_records')
+          .select('id, clock_in, clock_out, break_start, break_end')
+          .eq('worker_id', uid)
+          .eq('work_date', today)
+          .maybeSingle()
+
+        if (!existing?.clock_in) {
+          return Response.json({ error: 'まだ出勤打刻がありません。先に出勤打刻をしてください。' }, { status: 400 })
+        }
+        if (existing?.clock_out) {
+          const alreadyTime = new Date(existing.clock_out).toLocaleTimeString('ja-JP', {
+            hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo',
+          })
+          return Response.json({ success: true, voiceReply: `すでに${alreadyTime}に退勤済みです。` })
+        }
+
+        // 実働時間計算
+        const hourlyRate  = (profile as any)?.hourly_rate ?? 0
+        const totalMins   = Math.round((new Date(now).getTime() - new Date(existing.clock_in).getTime()) / 60000)
+        const breakMins   = existing.break_end && existing.break_start
+          ? Math.round((new Date(existing.break_end).getTime() - new Date(existing.break_start).getTime()) / 60000)
+          : 0
+        const workMins    = Math.max(0, totalMins - breakMins)
+        const dailyPay    = Math.round((workMins / 60) * hourlyRate)
+
+        const { error } = await adminClient
+          .from('attendance_records')
+          .update({
+            clock_out:    now,
+            break_minutes: breakMins,
+            work_minutes:  workMins,
+            hourly_rate:   hourlyRate,
+            daily_pay:     dailyPay,
+            updated_at:    now,
+          })
+          .eq('id', existing.id)
+
+        logVoiceAudit({ source: 'jarvis_voice', actor: uid, actorType: 'worker',
           companyId: profile.company_id, action, safetyLevel: level,
-          confirmed: true, result: res.ok ? 'success' : 'failed',
+          confirmed: true, result: error ? 'failed' : 'success', reason: error?.message })
+
+        if (error) {
+          return Response.json({ error: '退勤打刻に失敗しました。もう一度試してください。' }, { status: 500 })
+        }
+
+        // DB成功確認後にのみ発話
+        const clockOutTime = new Date(now).toLocaleTimeString('ja-JP', {
+          hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Tokyo',
         })
-        if (!res.ok) return Response.json({ error: data?.error ?? '退勤打刻に失敗しました。' }, { status: res.status })
-        return Response.json({ success: true, voiceReply: '退勤を記録しました。お疲れさまでした。' })
+        const workH = Math.floor(workMins / 60), workM = workMins % 60
+        const workText = workH > 0 ? `${workH}時間${workM}分` : `${workM}分`
+        return Response.json({ success: true, voiceReply: `${clockOutTime}に退勤を打刻しました。本日の実働時間は${workText}です。お疲れさまでした。` })
       }
 
       // ─── L4: submit_expense ───────────────────────────────

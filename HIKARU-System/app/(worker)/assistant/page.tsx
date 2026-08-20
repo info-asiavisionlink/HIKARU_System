@@ -6,8 +6,9 @@ import {
   Mic, X, Activity, Clock, CheckCircle, Bell,
   Home, Calendar, Zap, ChevronRight, Radio, Settings, Volume2,
 } from 'lucide-react'
-import { HikaruCore } from '@/components/voice/HikaruCore'
-import { useSystemJarvis } from '@/lib/voice/SystemVoiceContext'
+import { HikaruCore }        from '@/components/voice/HikaruCore'
+import { useSystemJarvis }   from '@/lib/voice/SystemVoiceContext'
+import { RealtimeVoicePanel } from '@/components/voice/RealtimeVoicePanel'
 import { browserTTS }      from '@/lib/voice/tts/browser'
 import { VOICE_ASSISTANT_NAME } from '@/lib/voice/config'
 import type { VoiceSettings } from '@/lib/voice/state/types'
@@ -254,7 +255,8 @@ function VoiceSettingsPanel({
 // ─── Main page content ───────────────────────────────────────
 function AssistantPageContent() {
   const router = useRouter()
-  const [showVoiceSettings, setShowVoiceSettings] = React.useState(false)
+  const [showVoiceSettings,  setShowVoiceSettings]  = React.useState(false)
+  const [showRealtime,       setShowRealtime]        = React.useState(false)
 
   const {
     mode, errorMessage, messages, isSpeechSupported,
@@ -262,6 +264,7 @@ function AssistantPageContent() {
     handleUtterance,
     startSession, stopSession,
     voiceSettings, setVoiceSettings,
+    voiceEngineMode, setVoiceEngineMode,
   } = useSystemJarvis()
 
   const memory   = useMemorySummary()
@@ -353,6 +356,22 @@ function AssistantPageContent() {
         </span>
       </button>
 
+      {/* Realtime モードボタン */}
+      <button
+        onClick={() => setShowRealtime(true)}
+        className="flex items-center justify-center gap-2 rounded-xl py-3 text-xs font-bold transition-all active:scale-95"
+        style={{
+          background: voiceEngineMode === 'realtime' ? `${G}28` : `${G}10`,
+          border:     `1px solid ${voiceEngineMode === 'realtime' ? G : `${G}30`}`,
+          color:      voiceEngineMode === 'realtime' ? GB : GD,
+          boxShadow:  voiceEngineMode === 'realtime' ? `0 0 12px ${G}40` : 'none',
+        }}
+        aria-label="Realtime モード"
+      >
+        <Radio className="h-3.5 w-3.5" />
+        {voiceEngineMode === 'realtime' ? 'REALTIME 中' : 'Realtime モード'}
+      </button>
+
       {/* Voice Settings */}
       <button
         onClick={() => setShowVoiceSettings(true)}
@@ -422,6 +441,19 @@ function AssistantPageContent() {
           settings={voiceSettings}
           onClose={() => setShowVoiceSettings(false)}
           onSave={setVoiceSettings}
+        />
+      )}
+
+      {/* Realtime Voice Panel（フルスクリーン Overlay）*/}
+      {showRealtime && (
+        <RealtimeVoicePanel
+          onStatusChange={s => {
+            setVoiceEngineMode(s === 'idle' || s === 'error' ? 'browser' : 'realtime')
+          }}
+          onClose={() => {
+            setShowRealtime(false)
+            setVoiceEngineMode('browser')
+          }}
         />
       )}
 

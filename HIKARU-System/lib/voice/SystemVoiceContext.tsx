@@ -45,17 +45,25 @@ export interface SystemVoiceChatMessage {
 
 // ─── セッション設定 ──────────────────────────────────────────
 const SESSION_STOP_RE    = /^(終了|やめて|止めて|ストップ|セッション終了|会話終了|閉じて|おしまい|終わり)$/
-// 確認「はい」判定 — 正確な完全一致ではなくキーワード包含で判定（STT誤認識に対応）
-const CONFIRM_YES_WORDS  = ['はい', 'うん', 'ええ', 'そうです', 'お願い', 'よろしく', 'よろし', 'OK', 'ok', 'オーケー', 'いいよ', 'いいです', 'いい', 'やって', 'してください', '確認', '実行']
-const CONFIRM_NO_WORDS   = ['いいえ', 'やめて', 'キャンセル', 'やめる', 'いや', 'ノー', 'やっぱり', 'なし', '取消']
+// 確認「はい」判定 — 完全一致セット + 特定パターン包含（誤検知リスクの単語を除外）
+const CONFIRM_YES_EXACT  = new Set(['はい', 'うん', 'ええ', 'ok', 'OK', 'オーケー', 'そう', 'そうです', 'もちろん', 'わかりました', 'わかった'])
+const CONFIRM_YES_STARTS = ['よろし', 'お願いします', 'いいです', 'いいよ', 'それでお願い', '実行して', '進めて', 'そうして', '承認します']
+// 'いい'単独・'やって'・'してください'・'お願い'単独 は誤検知リスクが高いため除外
+
+const CONFIRM_NO_EXACT   = new Set(['いいえ', 'いや', 'ノー'])
+const CONFIRM_NO_STARTS  = ['やめ', 'キャンセル', 'やっぱり', '違います', '戻して', '実行しない', 'ストップ', '取り消し', '却下']
 
 function isConfirmYes(text: string): boolean {
-  if (text.length > 25) return false // 長い発話は別の意図
-  return CONFIRM_YES_WORDS.some(w => text.includes(w))
+  const t = text.trim()
+  if (!t || t.length > 20) return false
+  if (CONFIRM_YES_EXACT.has(t)) return true
+  return CONFIRM_YES_STARTS.some(w => t.startsWith(w) || t === w)
 }
 function isConfirmNo(text: string): boolean {
-  if (text.length > 25) return false
-  return CONFIRM_NO_WORDS.some(w => text.includes(w))
+  const t = text.trim()
+  if (!t || t.length > 25) return false
+  if (CONFIRM_NO_EXACT.has(t)) return true
+  return CONFIRM_NO_STARTS.some(w => t.startsWith(w) || t.includes(w))
 }
 const STANDBY_MS         = 60_000       // 60s 無発話 → Standby表示
 const SESSION_TIMEOUT_MS = 5 * 60_000  // Standby後5分 → Session終了
@@ -84,6 +92,11 @@ function saveVoiceSettings(s: VoiceSettings): void {
   try { localStorage.setItem(LS_KEY, JSON.stringify(s)) } catch {}
 }
 
+// ─── Voice Engine Mode ────────────────────────────────────────
+// 'browser' = Browser STT + HTTP Agent + Browser TTS（デフォルト）
+// 'realtime' = WebRTC Realtime（開いている場合はこちらが主経路）
+export type VoiceEngineMode = 'browser' | 'realtime'
+
 // ─── Context型 ───────────────────────────────────────────────
 export interface SystemVoiceContextValue {
   mode:              VoiceMode
@@ -96,6 +109,8 @@ export interface SystemVoiceContextValue {
   voiceSettings:     VoiceSettings
   setVoiceSettings:  (s: VoiceSettings) => void
   isSpeechSupported: boolean
+  voiceEngineMode:   VoiceEngineMode
+  setVoiceEngineMode: (m: VoiceEngineMode) => void
   startListening:    () => void
   stopAll:           () => void
   startSession:      () => void
@@ -247,14 +262,15 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
   const screenCtx        = React.useMemo(() => getScreenContext(pathname), [pathname])
   const currentProjectId = screenCtx.currentResourceId
 
-  const [mode,          setMode]             = React.useState<VoiceMode>('idle')
-  const [transcript,    setTranscript]       = React.useState('')
-  const [response,      setResponse]         = React.useState('')
-  const [errorMessage,  setErrorMessage]     = React.useState('')
-  const [messages,      setMessages]         = React.useState<SystemVoiceChatMessage[]>([])
-  const [isSession,     setIsSession]        = React.useState(false)
-  const [isStandby,     setIsStandby]        = React.useState(false)
-  const [voiceSettings, setVoiceSettingsSt]  = React.useState<VoiceSettings>(DEFAULT_VOICE_SETTINGS)
+  const [mode,            setMode]             = React.useState<VoiceMode>('idle')
+  const [transcript,      setTranscript]       = React.useState('')
+  const [response,        setResponse]         = React.useState('')
+  const [errorMessage,    setErrorMessage]     = React.useState('')
+  const [messages,        setMessages]         = React.useState<SystemVoiceChatMessage[]>([])
+  const [isSession,       setIsSession]        = React.useState(false)
+  const [isStandby,       setIsStandby]        = React.useState(false)
+  const [voiceSettings,   setVoiceSettingsSt]  = React.useState<VoiceSettings>(DEFAULT_VOICE_SETTINGS)
+  const [voiceEngineMode, setVoiceEngineMode]  = React.useState<VoiceEngineMode>('browser')
 
   // localStorage から設定をロード（クライアントサイドのみ）
   React.useEffect(() => { setVoiceSettingsSt(loadVoiceSettings()) }, [])
@@ -446,6 +462,19 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
   }, [addMessage, speakAndMaybeResume, finishWithError, setModeSync])
 
   const handleUtterance = React.useCallback(async (utterance: string) => {
+    // ─── 期限切れ pendingConfirmation の自動クリア ───────────────
+    const expiredPending = conversationCtxRef.current.pendingConfirmation
+    if (expiredPending && Date.now() > expiredPending.expiresAt) {
+      conversationCtxRef.current = { ...conversationCtxRef.current, pendingConfirmation: undefined }
+      if (isConfirmYes(utterance.trim()) || isConfirmNo(utterance.trim())) {
+        const msg = '確認の有効期限が切れました。もう一度操作してください。'
+        setResponse(msg); addMessage('user', utterance); addMessage('assistant', msg)
+        speakAndMaybeResume(msg)
+        return
+      }
+      // 別の発話ならそのまま処理継続
+    }
+
     // セッション停止ワード
     if (isSessionRef.current && SESSION_STOP_RE.test(utterance.trim())) {
       addMessage('user', utterance)
@@ -755,11 +784,13 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
   const value = React.useMemo<SystemVoiceContextValue>(() => ({
     mode, isSession, isStandby, transcript, response, errorMessage, messages,
     voiceSettings, setVoiceSettings, isSpeechSupported,
+    voiceEngineMode, setVoiceEngineMode,
     startListening, stopAll, startSession, stopSession, handleUtterance,
     currentProjectId,
   }), [
     mode, isSession, isStandby, transcript, response, errorMessage, messages,
     voiceSettings, setVoiceSettings, isSpeechSupported,
+    voiceEngineMode, setVoiceEngineMode,
     startListening, stopAll, startSession, stopSession, handleUtterance,
     currentProjectId,
   ])
