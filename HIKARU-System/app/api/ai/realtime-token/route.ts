@@ -37,8 +37,12 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         model,
         voice,
-        // Safety identifier（ユーザーID をハッシュで送信）
-        // 今回は uid をそのまま送信（本番では crypto.subtle.digest でhash化を推奨）
+        turn_detection: {
+          type:                'server_vad',
+          threshold:           0.5,
+          prefix_padding_ms:   300,
+          silence_duration_ms: 700,
+        },
       }),
     })
 

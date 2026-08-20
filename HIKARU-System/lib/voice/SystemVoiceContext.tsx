@@ -294,6 +294,7 @@ export interface SystemVoiceContextValue {
   startSession:       () => void
   stopSession:        () => void
   handleUtterance:    (text: string) => Promise<void>
+  interrupt:          () => void
   currentProjectId:   string | undefined
 }
 
@@ -453,6 +454,10 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
   // ─── Realtime refs ────────────────────────────────────────────
   const realtimeSessionRef    = React.useRef<any>(null)
   const voiceEngineModeRef    = React.useRef<VoiceEngineMode>('off')
+  const micTrackRef           = React.useRef<MediaStreamTrack | null>(null)
+  const isSpeakingRef         = React.useRef(false)
+  const resumeTimerRef        = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastTranscriptLenRef  = React.useRef(0)
 
   React.useEffect(() => { voiceEngineModeRef.current = voiceEngineMode }, [voiceEngineMode])
 
@@ -489,6 +494,39 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     modeRef.current = m
     setMode(m)
   }, [])
+
+  // ─── Mic / Resume Timer ───────────────────────────────────────
+  const clearResumeTimer = React.useCallback(() => {
+    if (resumeTimerRef.current) { clearTimeout(resumeTimerRef.current); resumeTimerRef.current = null }
+  }, [])
+
+  const findMicTrack = React.useCallback(() => {
+    if (micTrackRef.current) return
+    try {
+      const transport = (realtimeSessionRef.current as any)?.transport
+      if (!transport) return
+      const pc: RTCPeerConnection | undefined =
+        transport.peerConnection ?? transport._peerConnection ?? transport.pc
+      if (!pc) return
+      for (const sender of pc.getSenders()) {
+        if (sender.track?.kind === 'audio') { micTrackRef.current = sender.track; break }
+      }
+    } catch {}
+  }, [])
+
+  const muteMic = React.useCallback((mute: boolean) => {
+    try { (realtimeSessionRef.current as any)?.mute?.(mute) } catch {}
+    findMicTrack()
+    if (micTrackRef.current) micTrackRef.current.enabled = !mute
+  }, [findMicTrack])
+
+  const interrupt = React.useCallback(() => {
+    clearResumeTimer()
+    try { (realtimeSessionRef.current as any)?.transport?.interrupt?.() } catch {}
+    isSpeakingRef.current = false
+    muteMic(false)
+    setModeSync('listening')
+  }, [clearResumeTimer, muteMic, setModeSync])
 
   // ─── Standby / Session Timeout 管理 ─────────────────────────
   const clearActivityTimers = React.useCallback(() => {
@@ -540,7 +578,9 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
 
   const stopAll = React.useCallback(() => {
     clearActivityTimers()
+    clearResumeTimer()
     isSessionRef.current = false
+    isSpeakingRef.current = false
     setIsSession(false)
     setIsStandby(false)
     recognitionRef.current?.abort()
@@ -551,13 +591,16 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     try { realtimeSessionRef.current?.close?.() }      catch {}
     try { realtimeSessionRef.current?.disconnect?.() } catch {}
     realtimeSessionRef.current = null
+    micTrackRef.current = null
     setVoiceEngineMode('off')
     voiceEngineModeRef.current = 'off'
-  }, [clearActivityTimers, setModeSync])
+  }, [clearActivityTimers, clearResumeTimer, setModeSync])
 
   const stopSession = React.useCallback(() => {
     clearActivityTimers()
+    clearResumeTimer()
     isSessionRef.current = false
+    isSpeakingRef.current = false
     setIsSession(false)
     setIsStandby(false)
     recognitionRef.current?.abort()
@@ -568,9 +611,10 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     try { realtimeSessionRef.current?.close?.() }      catch {}
     try { realtimeSessionRef.current?.disconnect?.() } catch {}
     realtimeSessionRef.current = null
+    micTrackRef.current = null
     setVoiceEngineMode('off')
     voiceEngineModeRef.current = 'off'
-  }, [clearActivityTimers, setModeSync])
+  }, [clearActivityTimers, clearResumeTimer, setModeSync])
 
   const finishWithError = React.useCallback((msg: string) => {
     setErrorMessage(msg)
@@ -883,12 +927,36 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
         voiceEngineModeRef.current = 'browser'
         if (isSessionRef.current) startListeningRef.current()
       })
-      session.on?.('agent_start_speech',  () => { if (voiceEngineModeRef.current === 'realtime') setModeSync('speaking') })
-      session.on?.('agent_end_speech',    () => { if (voiceEngineModeRef.current === 'realtime') setModeSync('listening') })
+      session.on?.('agent_start_speech', () => {
+        if (voiceEngineModeRef.current !== 'realtime') return
+        isSpeakingRef.current = true
+        clearResumeTimer()
+        muteMic(true)
+        setModeSync('speaking')
+      })
+      session.on?.('agent_end_speech', () => {
+        if (voiceEngineModeRef.current !== 'realtime') return
+        isSpeakingRef.current = false
+        setModeSync('processing')
+        clearResumeTimer()
+        // TTS音声の再生時間を文字数から推定してMic再開を遅延する
+        const delay = Math.min(Math.max(2500, lastTranscriptLenRef.current * 60), 9000)
+        lastTranscriptLenRef.current = 0
+        resumeTimerRef.current = setTimeout(() => {
+          if (voiceEngineModeRef.current !== 'realtime') return
+          if (modeRef.current !== 'processing') return
+          muteMic(false)
+          setModeSync('listening')
+        }, delay)
+      })
       session.on?.('user_start_speech',   () => { if (voiceEngineModeRef.current === 'realtime') setModeSync('listening') })
       session.on?.('user_end_speech',     () => { if (voiceEngineModeRef.current === 'realtime') setModeSync('processing') })
-      // Tool実行中は 'working' へ
-      session.on?.('tool_call_start',     () => { if (voiceEngineModeRef.current === 'realtime') setModeSync('working') })
+      // Tool実行中は 'working' へ（Mic OFFを維持）
+      session.on?.('tool_call_start', () => {
+        if (voiceEngineModeRef.current !== 'realtime') return
+        muteMic(true)
+        setModeSync('working')
+      })
       session.on?.('tool_call_end',       () => { if (voiceEngineModeRef.current === 'realtime') setModeSync('processing') })
 
       // 発話テキスト → messages に反映
@@ -896,11 +964,17 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
         if (text?.trim()) { setTranscript(text.trim()); addMessage('user', text.trim()) }
       })
       session.on?.('agent_transcription_done', (text: string) => {
-        if (text?.trim()) { setResponse(text.trim()); addMessage('assistant', text.trim()) }
+        if (text?.trim()) {
+          setResponse(text.trim())
+          addMessage('assistant', text.trim())
+          lastTranscriptLenRef.current = text.length
+        }
       })
 
       await session.connect({ apiKey: clientSecret })
       realtimeSessionRef.current = session
+      // WebRTC negotiation後にMic trackを取得
+      setTimeout(() => findMicTrack(), 800)
 
     } catch (err) {
       console.error('[realtime-connect]', err)
@@ -908,15 +982,17 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
       voiceEngineModeRef.current = 'browser'
       if (isSessionRef.current) setTimeout(() => startListeningRef.current(), 400)
     }
-  }, [router, addMessage, setModeSync])
+  }, [router, addMessage, setModeSync, muteMic, findMicTrack, clearResumeTimer])
 
   const disconnectRealtime = React.useCallback(() => {
+    clearResumeTimer()
     try { realtimeSessionRef.current?.close?.() } catch {}
     try { realtimeSessionRef.current?.disconnect?.() } catch {}
     realtimeSessionRef.current = null
+    micTrackRef.current = null
     setVoiceEngineMode('off')
     voiceEngineModeRef.current = 'off'
-  }, [])
+  }, [clearResumeTimer])
 
   const startListening = React.useCallback(() => {
     // Realtime が接続中または接続試行中ならスキップ（Realtime が Audio を管理）
@@ -1050,6 +1126,22 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname])
 
+  // ─── Watchdog: Realtime stuck → 10秒後にListeningへ強制復旧 ─
+  React.useEffect(() => {
+    if (voiceEngineMode !== 'realtime') return
+    if (mode !== 'processing' && mode !== 'working' && mode !== 'speaking') return
+    const t = setTimeout(() => {
+      if (voiceEngineModeRef.current !== 'realtime') return
+      if (modeRef.current !== 'processing' && modeRef.current !== 'working' && modeRef.current !== 'speaking') return
+      if (!realtimeSessionRef.current) return
+      isSpeakingRef.current = false
+      clearResumeTimer()
+      muteMic(false)
+      setModeSync('listening')
+    }, 10_000)
+    return () => clearTimeout(t)
+  }, [mode, voiceEngineMode, muteMic, clearResumeTimer, setModeSync])
+
   // ─── Logout時のクリーンアップ ─────────────────────────────────
   React.useEffect(() => {
     const handleLogout = () => {
@@ -1068,6 +1160,7 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     voiceEngineMode, setVoiceEngineMode,
     connectRealtime, disconnectRealtime,
     startListening, stopAll, startSession, stopSession, handleUtterance,
+    interrupt,
     currentProjectId,
   }), [
     mode, isSession, isStandby, transcript, response, errorMessage, messages,
@@ -1075,6 +1168,7 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     voiceEngineMode, setVoiceEngineMode,
     connectRealtime, disconnectRealtime,
     startListening, stopAll, startSession, stopSession, handleUtterance,
+    interrupt,
     currentProjectId,
   ])
 
