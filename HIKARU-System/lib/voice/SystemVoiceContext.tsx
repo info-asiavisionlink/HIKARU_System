@@ -884,19 +884,28 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
         credentials: 'include',
         body:        JSON.stringify({ model: RT_MODEL }),
       })
-      if (!tokenRes.ok) throw new Error('token_failed')
-      const { clientSecret } = await tokenRes.json()
-      if (!clientSecret) throw new Error('no_token')
+      if (!tokenRes.ok) {
+        const errBody = await tokenRes.text().catch(() => '')
+        throw new Error(`token_failed:${tokenRes.status} ${errBody}`)
+      }
+      const tokenData = await tokenRes.json()
+      const clientSecret: string | null = tokenData.clientSecret ?? null
+      if (!clientSecret) throw new Error('no_token: clientSecret missing in response')
 
       const { RealtimeAgent, RealtimeSession } = await import('@openai/agents/realtime') as any
       const tools   = buildHikaruRealtimeTools(router, projectIdRef)
-      const agent   = new RealtimeAgent({ name: 'JARVIS Worker Realtime', instructions: RT_SYSTEM_PROMPT, model: RT_MODEL, tools })
-      const session = new RealtimeSession(agent, { model: RT_MODEL })
+      const agent   = new RealtimeAgent({ name: 'JARVIS Worker Realtime', instructions: RT_SYSTEM_PROMPT, tools })
+      // transport: 'webrtc' は ephemeral client secret (ek_...) での接続に必須
+      const session = new RealtimeSession(agent, { transport: 'webrtc', model: RT_MODEL } as any)
 
+      // connected eventはSDKバージョンによって発火タイミングが異なるため、
+      // connect()解決後に直接状態をセットする（下部参照）
       session.on?.('connected', () => {
-        setVoiceEngineMode('realtime')
-        voiceEngineModeRef.current = 'realtime'
-        setModeSync('listening')
+        if (voiceEngineModeRef.current !== 'realtime') {
+          setVoiceEngineMode('realtime')
+          voiceEngineModeRef.current = 'realtime'
+          setModeSync('listening')
+        }
       })
       session.on?.('disconnected', () => {
         realtimeSessionRef.current = null
@@ -957,13 +966,19 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
         }
       })
 
-      await session.connect({ apiKey: clientSecret })
+      await session.connect({ apiKey: clientSecret } as any)
+
+      // connect()が正常解決 = WebRTC接続確立。イベント待ちせず即座にrealtime状態をセット。
       realtimeSessionRef.current = session
-      // WebRTC negotiation後にMic trackを取得
+      setVoiceEngineMode('realtime')
+      voiceEngineModeRef.current = 'realtime'
+      setModeSync('listening')
+      // WebRTC ICE negotiation後にMic trackをキャッシュ
       setTimeout(() => findMicTrack(), 800)
 
     } catch (err) {
-      console.error('[realtime-connect]', err)
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[realtime-connect] failed:', msg)
       setVoiceEngineMode('browser')
       voiceEngineModeRef.current = 'browser'
       if (isSessionRef.current) setTimeout(() => startListeningRef.current(), 400)
