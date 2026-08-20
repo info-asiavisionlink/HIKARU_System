@@ -159,13 +159,34 @@ export async function POST(req: NextRequest) {
 
       // ─── L4: complete_job ─────────────────────────────────
       case 'system.complete_job': {
-        const { jobId } = params
-        if (!jobId) return Response.json({ error: 'jobId required' }, { status: 400 })
+        const { jobId, projectId } = params
+        if (!jobId && !projectId) {
+          return Response.json({ error: 'jobId または projectId が必要です。' }, { status: 400 })
+        }
+
+        // jobId が直接渡された場合 / projectId から今日の in_progress job を探す
+        let resolvedJobId = jobId
+        if (!resolvedJobId && projectId) {
+          const today = new Date().toISOString().split('T')[0]
+          const { data: found } = await adminClient
+            .from('jobs')
+            .select('id, status')
+            .eq('project_id', projectId)
+            .eq('worker_id', uid)
+            .eq('company_id', profile.company_id)
+            .eq('work_date', today)
+            .eq('status', 'in_progress')
+            .single()
+          if (!found) {
+            return Response.json({ error: '進行中の作業が見つかりません。先に作業を開始してください。' }, { status: 404 })
+          }
+          resolvedJobId = found.id
+        }
 
         const { data: job } = await adminClient
           .from('jobs')
           .select('id, status, worker_id, company_id')
-          .eq('id', jobId)
+          .eq('id', resolvedJobId!)
           .eq('worker_id', uid)
           .eq('company_id', profile.company_id)
           .single()
@@ -175,7 +196,7 @@ export async function POST(req: NextRequest) {
             source: 'jarvis_voice', actor: uid, actorType: 'worker',
             companyId: profile.company_id, action, safetyLevel: level,
             confirmed: true, result: 'rejected', reason: 'not found or unauthorized',
-            resourceType: 'job', resourceId: jobId,
+            resourceType: 'job', resourceId: resolvedJobId,
           })
           return Response.json({ error: 'この作業が見つかりません。', forbidden: true }, { status: 403 })
         }
@@ -191,7 +212,7 @@ export async function POST(req: NextRequest) {
         const { data: updated, error } = await supabase
           .from('jobs')
           .update({ status: 'completed', completed_at: new Date().toISOString() })
-          .eq('id', jobId)
+          .eq('id', resolvedJobId!)
           .eq('worker_id', uid)
           .select()
           .single()
@@ -200,7 +221,7 @@ export async function POST(req: NextRequest) {
           source: 'jarvis_voice', actor: uid, actorType: 'worker',
           companyId: profile.company_id, action, safetyLevel: level,
           confirmed: true, result: error ? 'failed' : 'success', reason: error?.message,
-          resourceType: 'job', resourceId: jobId,
+          resourceType: 'job', resourceId: resolvedJobId,
         })
         if (error) return Response.json({ error: '完了処理に失敗しました。' }, { status: 500 })
         return Response.json({ success: true, job: updated, voiceReply: '作業を完了しました。お疲れさまでした。' })

@@ -120,7 +120,7 @@ const askManualAiTool = tool({
 
 const getNotificationsTool = tool({
   name:        'get_notifications',
-  description: '通知・お知らせの未読件数と内容を確認する',
+  description: '通知・お知らせの未読件数と内容・IDを確認する。mark_notification_read のためにIDが必要。',
   parameters:  z.object({}),
   execute: async (_, runCtx) => {
     const ctx = runCtx!.context as WorkerAgentContext
@@ -133,9 +133,9 @@ const getNotificationsTool = tool({
       if (unread.length === 0) return '未読の通知はありません。'
       const items = unread.slice(0, 5).map(
         (n: { id: string; title?: string; body?: string }, i: number) =>
-          `${i + 1}件目: ${n.title ?? n.body ?? '通知'}`
+          `${i + 1}件目: ${n.title ?? n.body ?? '通知'} [id:${n.id}]`
       ).join(', ')
-      return `未読の通知が${unread.length}件あります。内容: ${items}`
+      return `未読の通知が${unread.length}件あります。一覧（IDつき）: ${items}`
     } catch {
       return '通知の取得中にエラーが発生しました。'
     }
@@ -184,21 +184,22 @@ const getAttendanceTool = tool({
 
 const getExpensesTool = tool({
   name:        'get_expense_summary',
-  description: '経費申請の状況・申請中件数を確認する',
+  description: '経費申請の状況・下書き/申請中の件数とIDを確認する。submit_expense のためにexpenseIdが必要。',
   parameters:  z.object({}),
   execute: async (_, runCtx) => {
     const ctx = runCtx!.context as WorkerAgentContext
     try {
-      const res     = await apiGet('/api/expenses', ctx)
+      const res   = await apiGet('/api/expenses', ctx)
       if (!res.ok) return '経費情報を取得できませんでした。'
-      const data    = await res.json()
-      const items   = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : [])
-      const pending = items.filter((e: { status?: string }) =>
-        e.status === 'draft' || e.status === 'submitted'
-      ).length
-      return pending === 0
-        ? '申請中の経費はありません。'
-        : `申請中の経費が${pending}件あります。`
+      const data  = await res.json()
+      const items = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : [])
+      const drafts = items.filter((e: { status?: string }) => e.status === 'draft')
+      if (drafts.length === 0) return '提出できる経費申請（下書き）はありません。'
+      const list = drafts.slice(0, 3).map(
+        (e: { id: string; title?: string; amount?: number }, i: number) =>
+          `${i + 1}件目: ${e.title ?? `¥${e.amount ?? '?'}`} [id:${e.id}]`
+      ).join(', ')
+      return `提出可能な経費申請が${drafts.length}件あります。一覧（IDつき）: ${list}`
     } catch {
       return '経費情報の取得中にエラーが発生しました。'
     }
@@ -227,6 +228,46 @@ const proposeActionTool = tool({
       message:     confirmationMessage,
       expiresAt:   Date.now() + CONFIRMATION_EXPIRY_MS,
     })
+  },
+})
+
+// get_active_job: 今日の進行中 job ID を取得する（complete_job に必要）
+const getActiveJobTool = tool({
+  name:        'get_active_job',
+  description: '現在進行中（in_progress）の作業Job IDを取得する。complete_job を呼ぶ前に必ずこれでjobIdを確認すること。',
+  parameters:  z.object({
+    projectId: z.string().optional().describe('案件ID。省略時はURLの現在案件から解決。'),
+  }),
+  execute: async ({ projectId }, runCtx) => {
+    const ctx = runCtx!.context as WorkerAgentContext
+    const pid = projectId || ctx.projectId
+    try {
+      // 今日のin_progress jobを検索
+      const today = new Date().toISOString().split('T')[0]
+      const path  = pid
+        ? `/api/jobs?projectId=${pid}&status=in_progress&date=${today}`
+        : `/api/jobs?status=in_progress&date=${today}`
+      const res = await apiGet(path, ctx)
+      if (!res.ok) {
+        // フォールバック: home/data から案件を確認
+        const homeRes = await apiGet('/api/home/data', ctx)
+        if (!homeRes.ok) return '進行中の作業を確認できませんでした。'
+        const homeData = await homeRes.json()
+        const inProgress = (homeData.jobs ?? []).filter((j: { status: string }) => j.status === 'in_progress')
+        if (inProgress.length === 0) return '現在進行中の作業はありません。'
+        const j = inProgress[0] as { id: string; project?: { name?: string } }
+        return `進行中の作業: ${j.project?.name ?? '案件'} [jobId:${j.id}]`
+      }
+      const data = await res.json()
+      const jobs: Array<{ id: string; project_id?: string; status?: string }> =
+        Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : [])
+      const active = jobs.filter(j => j.status === 'in_progress')
+      if (active.length === 0) return '現在進行中の作業はありません。作業を開始してください。'
+      const j = active[0]
+      return `進行中の作業が見つかりました [jobId:${j.id}]。complete_job の params に jobId として使ってください。`
+    } catch {
+      return '進行中の作業の取得中にエラーが発生しました。'
+    }
   },
 })
 
@@ -304,13 +345,19 @@ propose_action の使い方:
 3. finalOutputに確認文を書く（例: 「〇〇の作業を完了にします。よろしいですか？」）
 4. ユーザーが「はい」と言ったら自動的にServerが実行する（Agentは何もしない）
 
-## propose_actionのactionとparamsの対応
-- system.start_job    → params: { projectId }  「〇〇の作業を開始します。よろしいですか？」
-- system.complete_job → params: { jobId }      「〇〇の作業を完了にします。よろしいですか？」
-- system.clock_in     → params: {}             「出勤を打刻します。よろしいですか？」
-- system.clock_out    → params: {}             「退勤を打刻します。よろしいですか？」
-- system.submit_expense → params: { expenseId } 「経費申請を提出します。よろしいですか？」
+## propose_actionのactionとparamsの対応（IDの取得方法）
+- system.start_job    → params: { projectId }   「〇〇の作業を開始します。よろしいですか？」
+  ※ projectId は get_today_jobs または URLの currentResourceId から取得
+- system.complete_job → params: { jobId }       「〇〇の作業を完了にします。よろしいですか？」
+  ※ jobId は必ず先に get_active_job を呼んで取得すること。get_today_jobs のIDはprojectIdであり jobId ではない
+- system.clock_in     → params: {}              「出勤を打刻します。よろしいですか？」
+- system.clock_out    → params: {}              「退勤を打刻します。よろしいですか？」
+- system.submit_expense → params: { expenseId } 「〇〇の経費申請を提出します。よろしいですか？」
+  ※ expenseId は先に get_expense_summary を呼んで一覧のIDから取得すること
 - system.mark_notification_read → params: { notificationId } 「通知を既読にします。よろしいですか？」
+  ※ notificationId は先に get_notifications を呼んで IDを確認すること
+
+## 重要：IDが不明な場合は propose_action を呼ばず、先にReadツールでIDを取得すること
 
 ## L5禁止操作（音声実行不可）
 削除・権限変更・大量操作は実行不可。
@@ -339,6 +386,7 @@ export const workerJarvisAgent = new Agent<WorkerAgentContext>({
   tools:        [
     getTodayJobsTool,
     getJobDetailsTool,
+    getActiveJobTool,
     getManualsTool,
     askManualAiTool,
     getNotificationsTool,

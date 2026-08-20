@@ -601,8 +601,21 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
         } else {
           finishWithError('音声が検出されませんでした。')
         }
+      } else if (e.error === 'aborted') {
+        // ページ遷移等で中断 → セッション中は黙って再試行
+        if (isSessionRef.current) {
+          setModeSync('idle')
+          setTimeout(() => { if (isSessionRef.current) startListeningRef.current() }, 500)
+        } else {
+          setModeSync('idle')
+        }
       } else {
-        finishWithError('音声認識でエラーが発生しました。')
+        if (isSessionRef.current) {
+          setModeSync('idle')
+          setTimeout(() => { if (isSessionRef.current) startListeningRef.current() }, 800)
+        } else {
+          finishWithError('音声認識でエラーが発生しました。')
+        }
       }
     }
     rec.onend = () => {
@@ -674,6 +687,20 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
       return // 通知へのNavigation replyで十分（過剰にしない）
     }
   }, [pathname, addMessage, speakAndMaybeResume])
+
+  // ─── ページ遷移後の音声認識フェイルセーフ復旧 ──────────────────
+  // ブラウザがSpeechRecognitionをページ遷移時に中断した場合でも
+  // セッションが生きていればlistening状態を確実に回復する
+  React.useEffect(() => {
+    if (!isSessionRef.current) return
+    const timer = setTimeout(() => {
+      if (isSessionRef.current && modeRef.current === 'idle') {
+        startListeningRef.current()
+      }
+    }, 700)
+    return () => clearTimeout(timer)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname])
 
   // ─── Logout時のクリーンアップ ─────────────────────────────────
   React.useEffect(() => {
