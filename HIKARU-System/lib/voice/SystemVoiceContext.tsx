@@ -753,7 +753,8 @@ async function fetchL1Result(action: SystemActionName, projectId?: string): Prom
         const res = await fetch('/api/expenses', { credentials: 'include' })
         if (!res.ok) return none('経費情報を取得できませんでした。')
         const data = await res.json()
-        const items   = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : [])
+        // GET /api/expenses → { expenses: [...] } が正しいResponse Contract
+        const items   = Array.isArray(data?.expenses) ? data.expenses : []
         const pending = items.filter((e: { status?: string }) => e.status === 'draft' || e.status === 'submitted').length
         return none(pending === 0 ? '申請中の経費はありません。' : `申請中の経費が${pending}件あります。`)
       }
