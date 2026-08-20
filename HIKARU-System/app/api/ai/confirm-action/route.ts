@@ -477,6 +477,32 @@ export async function POST(req: NextRequest) {
         return Response.json({ success: true, voiceReply: '経費申請を取り下げました。（ステータス: 取り下げ）' })
       }
 
+      // ─── L3: withdraw_correction ──────────────────────────
+      // PATCH /api/attendance/corrections/[id]/withdraw → { correction: { id, status, updated_at } }
+      case 'system.withdraw_correction': {
+        const { correctionId } = params
+        if (!correctionId) return Response.json({ error: 'correctionId required' }, { status: 400 })
+
+        const res = await fetch(`${req.nextUrl.origin}/api/attendance/corrections/${correctionId}/withdraw`, {
+          method:  'PATCH',
+          headers: { Cookie: req.headers.get('cookie') ?? '' },
+        })
+        const data = await res.json()
+        logVoiceAudit({
+          source: 'jarvis_voice', actor: uid, actorType: 'worker',
+          companyId: profile.company_id, action, safetyLevel: level,
+          confirmed: true, result: res.ok ? 'success' : 'failed',
+          resourceType: 'attendance_correction', resourceId: correctionId,
+        })
+        if (!res.ok) return Response.json({ error: data?.error ?? '取り下げに失敗しました。' }, { status: res.status })
+        // Read-back: PATCHレスポンスの { correction: { status } } で確認
+        const confirmedStatus = data?.correction?.status
+        if (confirmedStatus !== 'withdrawn') {
+          return Response.json({ error: '取り下げ処理を確認できませんでした。もう一度確認してください。' }, { status: 500 })
+        }
+        return Response.json({ success: true, voiceReply: '勤怠修正申請を取り下げました。（ステータス: 取り下げ）' })
+      }
+
       // ─── L3: mark_notification_read ───────────────────────
       case 'system.mark_notification_read': {
         const { notificationId } = params

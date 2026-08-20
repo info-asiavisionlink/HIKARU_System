@@ -147,6 +147,10 @@ export const SYSTEM_ACTIONS = {
     level: 3 as const,
     description: '通知を既読にする',
   },
+  'system.withdraw_correction': {
+    level: 3 as const,
+    description: '申請中の勤怠修正申請を取り下げる（submitted→withdrawn）',
+  },
 
   // --------------------------------------------------------
   // L4: Important Write（Confirmation必須・本人担当確認）

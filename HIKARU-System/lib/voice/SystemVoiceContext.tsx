@@ -98,7 +98,20 @@ IDを推測・捏造しない。必ずツールで取得した実IDを使う。
 「出勤して」→「出勤を打刻します。よろしいですか？」→「はい」→execute_confirmed_action呼ぶ→Tool Result発話
 「休憩開始して」→「休憩を開始します。よろしいですか？」→「はい」→execute_confirmed_action(break_start)→発話
 「休憩終わって」→execute_confirmed_action(break_end)→発話
-「退勤して」→execute_confirmed_action(clock_out)→発話`
+「退勤して」→execute_confirmed_action(clock_out)→発話
+
+## 勤怠修正申請フロー（★必ずこの手順）
+「勤怠修正したい」→ get_attendance_for_correction(date=YYYY-MM-DD) → 現在の出勤/退勤/休憩時刻を取得
+「出勤時間を8時50分に」→ 修正後時刻ヒアリング確認 → 理由ヒアリング
+確認発話例:「8月21日の出勤時間を9時02分から8時50分へ修正申請します。理由:打刻忘れ。申請しますか？」
+「はい」→ create_attendance_correction(attendanceRecordId=実ID, workDate=YYYY-MM-DD, requestedClockIn="08:50", reason="...") → 申請後Read-back
+「修正申請一覧教えて」→ get_correction_list → 「N件あります。1件目:8月21日 出勤修正 申請中 correctionId=UUID」
+「1件目の詳細」→ get_correction_list結果のcorrectionIdを使って詳細発話（すでに取得済みのため再取得不要）
+「この申請取り下げて」→「取り下げます？」→ execute_confirmed_action(withdraw_correction,{correctionId:"実UUID"})
+- ★ attendanceRecordIdはget_attendance_for_correctionで取得した実IDのみ使用。IDを推測・捏造禁止
+- ★ 時刻はHH:MM形式(24時間)。workDateと組み合わせてISOに変換する
+- ★ 修正項目が1つ以上必須。理由は必須(500文字以内)
+- ★ create_attendance_correction前に必ず内容を読み上げて確認を取る`
 
 // ─── Realtime Tools（ブラウザ側。credentials: 'include' でAuth）─
 // toolFactory = SDK の tool() 関数。FunctionTool を生成し invoke を持つオブジェクトを返す。
@@ -291,7 +304,7 @@ function buildHikaruRealtimeTools(
         properties: {
           destination: {
             type: 'string',
-            enum: ['home', 'attendance', 'schedule', 'shifts', 'expenses', 'expenses_new', 'notifications', 'profile', 'jobs', 'assistant', 'back', 'job_detail', 'job_chat', 'job_manual', 'job_report'],
+            enum: ['home', 'attendance', 'schedule', 'shifts', 'expenses', 'expenses_new', 'notifications', 'profile', 'jobs', 'assistant', 'back', 'job_detail', 'job_chat', 'job_manual', 'job_report', 'corrections'],
           },
           jobId: { type: 'string' },
         },
@@ -304,11 +317,13 @@ function buildHikaruRealtimeTools(
           home: '/home', attendance: '/attendance', schedule: '/schedule',
           shifts: '/shifts', expenses: '/expenses', expenses_new: '/expenses/new',
           notifications: '/notifications', profile: '/profile', jobs: '/jobs', assistant: '/assistant',
+          corrections: '/attendance/corrections',
         }
         const LABELS: Record<string, string> = {
           home: 'ホーム', attendance: '勤怠管理', schedule: 'スケジュール',
           shifts: 'シフト管理', expenses: '経費申請', expenses_new: '経費新規登録',
           notifications: '通知', profile: 'プロフィール', jobs: '案件一覧', assistant: 'アシスタント',
+          corrections: '勤怠修正申請一覧',
         }
         console.log('[JARVIS-nav] tool_called navigate_to', Date.now())
         console.log('[JARVIS-nav] destination', destination)
@@ -589,6 +604,171 @@ function buildHikaruRealtimeTools(
           transport: '交通費', parking: '駐車場代', supplies: '備品', consumables: '消耗品', other: 'その他',
         }
         return `経費を更新しました。${LABELS[updated.category] ?? updated.category} ¥${updated.amount}。${updated.expense_date}。expenseId=${eid}`
+      },
+    }),
+
+    // ─── 勤怠修正申請ツール群 ─────────────────────────────────
+
+    toolFactory({
+      // 勤怠修正申請一覧 — GET /api/attendance/corrections → { corrections: [...] }
+      name:        'get_correction_list',
+      description: '勤怠修正申請の一覧を取得する。correctionIdを含むので「1件目」等の操作に使える。',
+      parameters:  { type: 'object', properties: {}, required: [], additionalProperties: false },
+      execute:     async () => {
+        const data = await apiFetch('/api/attendance/corrections')
+        if (!data) return '修正申請一覧を取得できませんでした。'
+        const list: any[] = Array.isArray(data?.corrections) ? data.corrections : []
+        if (list.length === 0) return '勤怠修正申請はありません。'
+        const STATUS: Record<string, string> = {
+          submitted: '申請中', approved: '承認済み', rejected: '却下', withdrawn: '取り下げ',
+        }
+        const fmtT = (t: string | null) => t
+          ? new Date(t).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+          : '—'
+        const items = list.slice(0, 5).map((c: any, i: number) => {
+          const date   = c.attendance_records?.work_date ?? '日付不明'
+          const status = STATUS[c.status] ?? c.status
+          const parts  = [
+            c.requested_clock_in    ? `出勤→${fmtT(c.requested_clock_in)}`    : '',
+            c.requested_clock_out   ? `退勤→${fmtT(c.requested_clock_out)}`   : '',
+            c.requested_break_start ? `休憩開始→${fmtT(c.requested_break_start)}` : '',
+            c.requested_break_end   ? `休憩終了→${fmtT(c.requested_break_end)}`   : '',
+          ].filter(Boolean).join('・')
+          return `${i + 1}件目: ${date} ${parts} ${status} correctionId=${c.id}`
+        }).join(' / ')
+        return `修正申請${list.length}件。${items}`
+      },
+    }),
+
+    toolFactory({
+      // 修正申請作成のために対象日の勤怠記録を取得する
+      // 今日: GET /api/attendance → { data: single_record | null }
+      // 他の日: GET /api/attendance?mode=monthly&year=YYYY&month=MM → { data: records[] }
+      name:        'get_attendance_for_correction',
+      description: '修正申請を作るために対象日の勤怠記録（attendanceRecordId・現在の打刻時刻）を取得する。',
+      parameters:  {
+        type:       'object',
+        properties: {
+          date: {
+            type:        'string',
+            description: '対象日（YYYY-MM-DD形式）。省略時は今日。',
+          },
+        },
+        required:             [],
+        additionalProperties: false,
+      },
+      execute: async (input: any) => {
+        const today      = new Date().toISOString().split('T')[0]
+        const targetDate = (input?.date ?? today).trim() as string
+        const fmtT = (t: string | null) => t
+          ? new Date(t).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+          : '未打刻'
+
+        let rec: any = null
+        if (targetDate === today) {
+          // GET /api/attendance → { data: single_record | null }
+          const data = await apiFetch('/api/attendance')
+          rec = data?.data ?? null
+        } else {
+          // GET /api/attendance?mode=monthly → { data: records[] }
+          const d     = new Date(targetDate + 'T00:00:00')
+          const year  = d.getFullYear()
+          const month = d.getMonth() + 1
+          const data  = await apiFetch(`/api/attendance?mode=monthly&year=${year}&month=${month}`)
+          const recs: any[] = Array.isArray(data?.data) ? data.data : []
+          rec = recs.find((r: any) => r.work_date === targetDate) ?? null
+        }
+
+        if (!rec) {
+          return `${targetDate}の勤怠記録が見つかりません。打刻されていないか、対象外の日付の可能性があります。`
+        }
+        console.log('[JARVIS-correction] get_attendance_for_correction id:', rec.id)
+        return [
+          `${targetDate}の勤怠記録:`,
+          `出勤${fmtT(rec.clock_in)} / 退勤${fmtT(rec.clock_out)}`,
+          ` / 休憩開始${fmtT(rec.break_start)} / 休憩終了${fmtT(rec.break_end)}。`,
+          `attendanceRecordId=${rec.id}。`,
+          `create_attendance_correctionのparamsに{ attendanceRecordId:"${rec.id}", workDate:"${targetDate}" }を使用。`,
+        ].join('')
+      },
+    }),
+
+    toolFactory({
+      // 勤怠修正申請作成 — POST /api/attendance/corrections → { correction: {} } status 201
+      // status: 'submitted'（draftなし。作成=即申請）
+      // ★ 呼ぶ前に必ず内容を読み上げてユーザーの確認を取ること
+      name:        'create_attendance_correction',
+      description: '勤怠修正申請を提出する。attendanceRecordId・workDate・reason必須。変更する時刻をHH:MM形式で指定。必ず事前確認してから呼ぶ。',
+      parameters:  {
+        type:       'object',
+        properties: {
+          attendanceRecordId:  { type: 'string', description: 'get_attendance_for_correctionで取得した実ID' },
+          workDate:            { type: 'string', description: '対象日 YYYY-MM-DD' },
+          requestedClockIn:    { type: 'string', description: '修正後出勤時刻 HH:MM（変更する場合のみ）' },
+          requestedClockOut:   { type: 'string', description: '修正後退勤時刻 HH:MM（変更する場合のみ）' },
+          requestedBreakStart: { type: 'string', description: '修正後休憩開始時刻 HH:MM（変更する場合のみ）' },
+          requestedBreakEnd:   { type: 'string', description: '修正後休憩終了時刻 HH:MM（変更する場合のみ）' },
+          reason:              { type: 'string', description: '申請理由（必須・500文字以内）' },
+        },
+        required:             ['attendanceRecordId', 'workDate', 'reason'],
+        additionalProperties: false,
+      },
+      execute: async (input: any) => {
+        const {
+          attendanceRecordId, workDate,
+          requestedClockIn, requestedClockOut, requestedBreakStart, requestedBreakEnd,
+          reason,
+        } = input ?? {}
+
+        if (!attendanceRecordId) return '勤怠記録IDが必要です。get_attendance_for_correctionで取得してください。'
+        if (!workDate)           return '対象日（workDate YYYY-MM-DD）が必要です。'
+        if (!reason?.trim())     return '申請理由を入力してください。'
+
+        // HH:MM → ISO UTC 変換（ブラウザローカルタイムゾーン使用・JST環境で正常動作）
+        const toISO = (hhmm: string | null | undefined): string | null => {
+          if (!hhmm) return null
+          const m = hhmm.trim().match(/^(\d{1,2}):(\d{2})$/)
+          if (!m) return null
+          const dt = new Date(`${workDate}T${m[1].padStart(2, '0')}:${m[2]}:00`)
+          return isNaN(dt.getTime()) ? null : dt.toISOString()
+        }
+
+        const req_ci = toISO(requestedClockIn)
+        const req_co = toISO(requestedClockOut)
+        const req_bs = toISO(requestedBreakStart)
+        const req_be = toISO(requestedBreakEnd)
+
+        if (!req_ci && !req_co && !req_bs && !req_be) {
+          return '修正する時刻を1つ以上指定してください。HH:MM形式（例: 08:50）で指定してください。'
+        }
+        // 無効フォーマットチェック
+        if ((requestedClockIn && !req_ci) || (requestedClockOut && !req_co) ||
+            (requestedBreakStart && !req_bs) || (requestedBreakEnd && !req_be)) {
+          return '時刻の形式が不正です。HH:MM形式（例: 08:50）で指定してください。'
+        }
+
+        console.log('[JARVIS-correction] create_attendance_correction:', attendanceRecordId, { req_ci, req_co, req_bs, req_be })
+        const res = await fetch('/api/attendance/corrections', {
+          method:      'POST',
+          headers:     { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body:        JSON.stringify({
+            attendance_record_id:  attendanceRecordId,
+            requested_clock_in:    req_ci,
+            requested_clock_out:   req_co,
+            requested_break_start: req_bs,
+            requested_break_end:   req_be,
+            reason:                reason.trim(),
+          }),
+        })
+        const data = await res.json()
+        // POST /api/attendance/corrections → { correction: {} } status 201
+        if (!res.ok) return `修正申請に失敗しました: ${data.error ?? 'エラー'}`
+
+        const correction = data?.correction
+        const cid = correction?.id ?? '不明'
+        console.log('[JARVIS-correction] created correctionId:', cid)
+        return `勤怠修正申請を提出しました。correctionId=${cid}。管理者の確認をお待ちください。取り下げる場合はexecute_confirmed_action(withdraw_correction,{correctionId:"${cid}"})を使用。`
       },
     }),
   ]
