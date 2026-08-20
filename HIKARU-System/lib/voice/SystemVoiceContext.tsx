@@ -56,9 +56,12 @@ job_manual=マニュアル, job_report=報告書
 - system.mark_notification_read 通知既読（params: { notificationId }）`
 
 // ─── Realtime Tools（ブラウザ側。credentials: 'include' でAuth）─
+// toolFactory = SDK の tool() 関数。FunctionTool を生成し invoke を持つオブジェクトを返す。
+// plain object { execute } では SDK が invoke を呼べないため Tool 実行が無音で失敗する。
 function buildHikaruRealtimeTools(
-  router:      ReturnType<typeof useRouter>,
+  router:       ReturnType<typeof useRouter>,
   projectIdRef: React.MutableRefObject<string | undefined>,
+  toolFactory:  (opts: any) => any,
 ) {
   const apiFetch = async (path: string) => {
     const res = await fetch(path, { credentials: 'include' })
@@ -67,10 +70,10 @@ function buildHikaruRealtimeTools(
   }
 
   return [
-    {
+    toolFactory({
       name:        'get_today_jobs',
       description: '今日の担当作業・案件一覧とIDを取得する',
-      parameters:  { type: 'object', properties: {}, required: [] },
+      parameters:  { type: 'object', properties: {}, required: [], additionalProperties: false },
       execute:     async () => {
         const data = await apiFetch('/api/home/data')
         if (!data) return '今日の作業情報を取得できませんでした。'
@@ -79,11 +82,11 @@ function buildHikaruRealtimeTools(
         const list = ps.slice(0, 5).map((p, i) => `${i + 1}件目: ${p.name} [id:${p.id}]`).join(', ')
         return `今日は${ps.length}件あります。${list}`
       },
-    },
-    {
+    }),
+    toolFactory({
       name:        'get_notifications',
       description: '通知・未読件数とIDを確認する',
-      parameters:  { type: 'object', properties: {}, required: [] },
+      parameters:  { type: 'object', properties: {}, required: [], additionalProperties: false },
       execute:     async () => {
         const data = await apiFetch('/api/notifications')
         if (!data) return '通知を取得できませんでした。'
@@ -93,11 +96,11 @@ function buildHikaruRealtimeTools(
         const items = unread.slice(0, 3).map((n: any, i: number) => `${i + 1}: ${n.title ?? '通知'} [id:${n.id}]`).join(', ')
         return `未読${unread.length}件。${items}`
       },
-    },
-    {
+    }),
+    toolFactory({
       name:        'get_attendance',
       description: '今日の勤怠・打刻状況を確認する',
-      parameters:  { type: 'object', properties: {}, required: [] },
+      parameters:  { type: 'object', properties: {}, required: [], additionalProperties: false },
       execute:     async () => {
         const data = await apiFetch('/api/attendance')
         if (!data) return '勤怠情報を取得できませんでした。'
@@ -108,11 +111,11 @@ function buildHikaruRealtimeTools(
         const co = today.clock_out ? new Date(today.clock_out).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '未'
         return `本日: 出勤${ci} / 退勤${co}。`
       },
-    },
-    {
+    }),
+    toolFactory({
       name:        'get_expense_summary',
       description: '提出可能な経費申請（下書き）一覧とIDを確認する',
-      parameters:  { type: 'object', properties: {}, required: [] },
+      parameters:  { type: 'object', properties: {}, required: [], additionalProperties: false },
       execute:     async () => {
         const data = await apiFetch('/api/expenses')
         if (!data) return '経費情報を取得できませんでした。'
@@ -122,12 +125,18 @@ function buildHikaruRealtimeTools(
         const list = drafts.slice(0, 3).map((e: any, i: number) => `${i + 1}: ${e.title ?? `¥${e.amount}`} [id:${e.id}]`).join(', ')
         return `提出可能な経費申請${drafts.length}件。${list}`
       },
-    },
-    {
+    }),
+    toolFactory({
       name:        'get_active_job',
       description: '今日の進行中作業のjobIdを取得する（complete_jobで必要）',
-      parameters:  { type: 'object', properties: { projectId: { type: 'string' } }, required: [] },
-      execute:     async ({ projectId }: { projectId?: string }) => {
+      parameters:  {
+        type: 'object',
+        properties: { projectId: { type: 'string' } },
+        required: [],
+        additionalProperties: false,
+      },
+      execute: async (input: any) => {
+        const { projectId } = input ?? {}
         const pid   = projectId || projectIdRef.current
         const today = new Date().toISOString().split('T')[0]
         const path  = pid ? `/api/jobs?projectId=${pid}&status=in_progress&date=${today}` : `/api/jobs?status=in_progress&date=${today}`
@@ -137,38 +146,36 @@ function buildHikaruRealtimeTools(
         if (active.length === 0) return '進行中の作業はありません。作業を開始してください。'
         return `進行中の作業 [jobId:${active[0].id}]。complete_jobのparamsにjobIdとして使用。`
       },
-    },
-    {
+    }),
+    toolFactory({
       name:        'get_schedule',
       description: '今後のスケジュールを確認する',
-      parameters:  { type: 'object', properties: {}, required: [] },
+      parameters:  { type: 'object', properties: {}, required: [], additionalProperties: false },
       execute:     async () => {
         const data = await apiFetch('/api/schedule')
         if (!data) return 'スケジュールを取得できませんでした。'
         const items = Array.isArray(data?.data) ? data.data : []
         return items.length === 0 ? '今後の予定はありません。' : `スケジュールに${items.length}件の予定があります。`
       },
-    },
-    {
-      // navigate_to — Allowlist経由のNavigation。自由なURL生成は禁止。
+    }),
+    toolFactory({
+      // navigate_to — Allowlist Registry経由。自由URL禁止。tool()で正式なFunctionToolを生成。
       name:        'navigate_to',
       description: 'ページへ移動する。destinationは必ずEnum値から選ぶ。自由URLは絶対禁止。',
       parameters:  {
         type:       'object',
         properties: {
           destination: {
-            type:        'string',
-            enum:        ['home', 'attendance', 'schedule', 'shifts', 'expenses', 'notifications', 'profile', 'jobs', 'assistant', 'back', 'job_detail', 'job_chat', 'job_manual', 'job_report'],
-            description: 'ナビゲーション先のキー名',
+            type: 'string',
+            enum: ['home', 'attendance', 'schedule', 'shifts', 'expenses', 'notifications', 'profile', 'jobs', 'assistant', 'back', 'job_detail', 'job_chat', 'job_manual', 'job_report'],
           },
-          jobId: {
-            type:        'string',
-            description: 'job_detail/job_chat/job_manual/job_report指定時のみ使用。省略時は現在の案件IDを使用。',
-          },
+          jobId: { type: 'string' },
         },
-        required: ['destination'],
+        required:             ['destination'],
+        additionalProperties: false,
       },
-      execute: async ({ destination, jobId }: { destination: string; jobId?: string }) => {
+      execute: async (input: any) => {
+        const { destination, jobId } = input ?? {}
         const NAV: Record<string, string> = {
           home: '/home', attendance: '/attendance', schedule: '/schedule',
           shifts: '/shifts', expenses: '/expenses', notifications: '/notifications',
@@ -179,9 +186,12 @@ function buildHikaruRealtimeTools(
           shifts: 'シフト管理', expenses: '経費申請', notifications: '通知',
           profile: 'プロフィール', jobs: '案件一覧', assistant: 'アシスタント',
         }
+        console.log('[JARVIS-nav] tool_called navigate_to', Date.now())
+        console.log('[JARVIS-nav] destination', destination)
         if (destination === 'back') {
           router.back()
-          return '前の画面に戻ります。'
+          console.log('[JARVIS-nav] router_back_called')
+          return '前の画面に戻りました。'
         }
         const subPages: Record<string, string> = {
           job_detail: '', job_chat: '/chat', job_manual: '/manual', job_report: '/report',
@@ -189,19 +199,27 @@ function buildHikaruRealtimeTools(
         if (destination in subPages) {
           const id = jobId || projectIdRef.current
           if (!id) return '案件を特定できません。案件一覧から選んでください。'
-          router.push(`/jobs/${id}${subPages[destination]}`)
+          const route = `/jobs/${id}${subPages[destination]}`
+          console.log('[JARVIS-nav] target_route', route)
+          router.push(route)
+          console.log('[JARVIS-nav] router_push_called')
           const label = destination === 'job_detail' ? '案件詳細'
             : destination === 'job_chat' ? 'AIアシスタント'
             : destination === 'job_manual' ? 'マニュアル' : '報告書'
-          return `${label}を開きます。`
+          return `${label}を開きました。`
         }
         const route = NAV[destination]
-        if (!route) return 'その画面は現在操作対象にありません。'
+        if (!route) {
+          console.log('[JARVIS-nav] unknown_destination', destination)
+          return 'その画面は現在操作対象にありません。'
+        }
+        console.log('[JARVIS-nav] target_route', route)
         router.push(route)
-        return `${LABELS[destination] ?? route}を開きます。`
+        console.log('[JARVIS-nav] router_push_called')
+        return `${LABELS[destination] ?? route}を開きました。`
       },
-    },
-    {
+    }),
+    toolFactory({
       name:        'execute_confirmed_action',
       description: 'ユーザーが「はい」と明確に確認した後にのみ呼ぶ。Server Auth再検証して実行する。',
       parameters:  {
@@ -210,17 +228,17 @@ function buildHikaruRealtimeTools(
           action: {
             type: 'string',
             enum: ['system.clock_in', 'system.clock_out', 'system.start_job', 'system.complete_job', 'system.submit_expense', 'system.mark_notification_read'],
-            description: '実行するAction名',
           },
           params: {
             type:                 'object',
             additionalProperties: { type: 'string' },
-            description:          'jobId / projectId / expenseId / notificationId 等',
           },
         },
-        required: ['action'],
+        required:             ['action'],
+        additionalProperties: false,
       },
-      execute: async ({ action, params = {} }: { action: string; params?: Record<string, string> }) => {
+      execute: async (input: any) => {
+        const { action, params = {} } = input ?? {}
         try {
           const res = await fetch('/api/ai/confirm-action', {
             method:      'POST',
@@ -234,7 +252,7 @@ function buildHikaruRealtimeTools(
           return '実行中にエラーが発生しました。'
         }
       },
-    },
+    }),
   ]
 }
 
@@ -941,8 +959,9 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
       const clientSecret: string | null = tokenData.clientSecret ?? null
       if (!clientSecret) throw new Error('no_token: clientSecret missing in response')
 
-      const { RealtimeAgent, RealtimeSession } = await import('@openai/agents/realtime') as any
-      const tools   = buildHikaruRealtimeTools(router, projectIdRef)
+      // tool() ファクトリを取得 — plain objectではなくFunctionTool(invoke付き)を生成するために必須
+      const { RealtimeAgent, RealtimeSession, tool: toolFactory } = await import('@openai/agents/realtime') as any
+      const tools   = buildHikaruRealtimeTools(router, projectIdRef, toolFactory)
       const agent   = new RealtimeAgent({ name: 'JARVIS Worker Realtime', instructions: RT_SYSTEM_PROMPT, tools })
       // transport: 'webrtc' は ephemeral client secret (ek_...) での接続に必須
       // eagerness: 'high' でsemantic_VADのターン検出を高速化（Latency改善）
@@ -1001,12 +1020,15 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
       })
 
       // AI回答完了 — 3番目の引数にtext output（v0.17型定義確認済み）
+      // Dedupe: 同一turnで同一テキストが二重に追加されないようMessagesRefと照合
       session.on?.('agent_end', (_ctx: unknown, _agent: unknown, output: string) => {
         const text = (output ?? '').trim()
-        if (text) {
-          setResponse(text)
-          addMessage('assistant', text)
-        }
+        if (!text) return
+        const msgs = messagesRef.current
+        const last = msgs[msgs.length - 1]
+        if (last?.role === 'assistant' && last.text === text) return
+        setResponse(text)
+        addMessage('assistant', text)
       })
 
       // Tool開始
