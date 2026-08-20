@@ -25,6 +25,18 @@ const RT_SYSTEM_PROMPT = `あなたはHIKARU Workerアシスタント「JARVIS�
 清掃業務に携わる従業員の音声アシスタントとして、自然な日本語で業務をサポートします。
 回答は2〜3文以内で音声向けに簡潔に。
 
+## Navigation操作（Read-only・安全）
+「〇〇を開いて」「〇〇に移動して」「〇〇見せて」等のリクエストは navigate_to ツールを使う。
+destinationは必ず下記のEnum値を選ぶ（自由なURLは絶対禁止）。
+移動後は「〇〇を開きました」と簡潔に発話する。
+
+destination値:
+home=ホーム, attendance=勤怠管理, schedule=スケジュール,
+shifts=シフト管理, expenses=経費申請, notifications=通知,
+profile=プロフィール, jobs=案件一覧, assistant=アシスタント,
+back=前の画面, job_detail=案件詳細, job_chat=AIチャット,
+job_manual=マニュアル, job_report=報告書
+
 ## Write操作（最重要ルール）
 打刻・作業開始・完了・経費申請等のWrite操作は必ずユーザーの確認を取ってから execute_confirmed_action を呼ぶ。
 確認なしに実行ツールを呼ばない。
@@ -138,20 +150,55 @@ function buildHikaruRealtimeTools(
       },
     },
     {
-      name:        'navigate',
-      description: '指定のページへ移動する',
+      // navigate_to — Allowlist経由のNavigation。自由なURL生成は禁止。
+      name:        'navigate_to',
+      description: 'ページへ移動する。destinationは必ずEnum値から選ぶ。自由URLは絶対禁止。',
       parameters:  {
         type:       'object',
         properties: {
-          path:      { type: 'string', description: '/home, /jobs, /jobs/[jobId], /attendance, /expenses, /notifications, /schedule, /shifts, /profile 等' },
-          projectId: { type: 'string', description: '案件ページへ移動する場合の案件ID' },
+          destination: {
+            type:        'string',
+            enum:        ['home', 'attendance', 'schedule', 'shifts', 'expenses', 'notifications', 'profile', 'jobs', 'assistant', 'back', 'job_detail', 'job_chat', 'job_manual', 'job_report'],
+            description: 'ナビゲーション先のキー名',
+          },
+          jobId: {
+            type:        'string',
+            description: 'job_detail/job_chat/job_manual/job_report指定時のみ使用。省略時は現在の案件IDを使用。',
+          },
         },
-        required: ['path'],
+        required: ['destination'],
       },
-      execute: async ({ path, projectId }: { path: string; projectId?: string }) => {
-        const target = projectId ? path.replace('[jobId]', projectId).replace('[id]', projectId) : path
-        router.push(target)
-        return `${target}へ移動します。`
+      execute: async ({ destination, jobId }: { destination: string; jobId?: string }) => {
+        const NAV: Record<string, string> = {
+          home: '/home', attendance: '/attendance', schedule: '/schedule',
+          shifts: '/shifts', expenses: '/expenses', notifications: '/notifications',
+          profile: '/profile', jobs: '/jobs', assistant: '/assistant',
+        }
+        const LABELS: Record<string, string> = {
+          home: 'ホーム', attendance: '勤怠管理', schedule: 'スケジュール',
+          shifts: 'シフト管理', expenses: '経費申請', notifications: '通知',
+          profile: 'プロフィール', jobs: '案件一覧', assistant: 'アシスタント',
+        }
+        if (destination === 'back') {
+          router.back()
+          return '前の画面に戻ります。'
+        }
+        const subPages: Record<string, string> = {
+          job_detail: '', job_chat: '/chat', job_manual: '/manual', job_report: '/report',
+        }
+        if (destination in subPages) {
+          const id = jobId || projectIdRef.current
+          if (!id) return '案件を特定できません。案件一覧から選んでください。'
+          router.push(`/jobs/${id}${subPages[destination]}`)
+          const label = destination === 'job_detail' ? '案件詳細'
+            : destination === 'job_chat' ? 'AIアシスタント'
+            : destination === 'job_manual' ? 'マニュアル' : '報告書'
+          return `${label}を開きます。`
+        }
+        const route = NAV[destination]
+        if (!route) return 'その画面は現在操作対象にありません。'
+        router.push(route)
+        return `${LABELS[destination] ?? route}を開きます。`
       },
     },
     {
@@ -1153,13 +1200,17 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     connectRealtime()
   }, [scheduleStandby, connectRealtime])
 
-  // ─── Phase P2: ページ遷移後の自然な次Action提案 ──────────────
+  // ─── Phase P2: ページ遷移後の自然な次Action提案（Browser STT fallback専用）──
+  // Realtimeモード中はRealtimeモデル自身がNavigation後の発話を処理するためスキップ。
+  // Browser STT fallback時のみbrowserTTSで次Actionを提案する。
   const prevPathRef = React.useRef(pathname)
   React.useEffect(() => {
     const prev = prevPathRef.current
     prevPathRef.current = pathname
     if (!isSessionRef.current) return
     if (prev === pathname) return
+    // Realtimeモード中はスキップ（Realtime AgentがNavigation後の応答を担う）
+    if (voiceEngineModeRef.current === 'realtime' || voiceEngineModeRef.current === 'realtime-connecting') return
 
     const ctx = getScreenContext(pathname)
     const lastAction = conversationCtxRef.current.lastAction ?? ''
@@ -1174,6 +1225,7 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
         : '案件を開きました。作業内容を確認しますか？'
       setTimeout(() => {
         if (!isSessionRef.current) return
+        if (voiceEngineModeRef.current === 'realtime') return
         addMessage('assistant', msg)
         setResponse(msg)
         speakAndMaybeResume(msg)
@@ -1185,6 +1237,7 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     if (ctx.contextType === 'manual' && lastAction === 'system.open_manual') {
       setTimeout(() => {
         if (!isSessionRef.current) return
+        if (voiceEngineModeRef.current === 'realtime') return
         const msg = 'マニュアルを開きました。読み上げますか？'
         addMessage('assistant', msg)
         setResponse(msg)

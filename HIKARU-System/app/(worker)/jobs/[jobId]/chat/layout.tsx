@@ -1,6 +1,6 @@
-import { WorkerLayout } from '@/components/layouts/WorkerLayout'
-
-// チャット画面ではBottomNavを非表示にする（入力欄と干渉するため）
+// チャット画面レイアウト
+// WorkerLayoutは(worker)/layout.tsxで既に適用済みのため、ここでは不要。
+// 二重マウントするとSystemVoiceProviderが二重に起動しRealtimeSessionが競合する。
 export default function ChatLayout({ children }: { children: React.ReactNode }) {
-  return <WorkerLayout hideBottomNav>{children}</WorkerLayout>
+  return <>{children}</>
 }
