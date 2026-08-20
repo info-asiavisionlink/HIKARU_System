@@ -514,13 +514,11 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     } catch {}
   }, [])
 
-  // Tool実行中のMute（Barge-inが不要な処理中のみ使用）
-  // AI speaking中はmuteしない → server VADでBarge-in有効
+  // Tool実行中のMute — SDKのmute()のみ使用。WebRTC track直接操作は行わない。
+  // semantic_vad+WebRTC環境ではSDKをPrimaryにし、track.enabled競合を排除する。
   const muteMic = React.useCallback((mute: boolean) => {
     try { (realtimeSessionRef.current as any)?.mute?.(mute) } catch {}
-    findMicTrack()
-    if (micTrackRef.current) micTrackRef.current.enabled = !mute
-  }, [findMicTrack])
+  }, [])
 
   const interrupt = React.useCallback(() => {
     clearResumeTimer()
@@ -905,10 +903,13 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
       //     user_start_speech/user_end_speech/tool_call_start/tool_call_end/
       //     user_transcription_done/agent_transcription_done は v0.17に存在しない。
 
-      // AI処理開始（audio_start前に発火）
+      // AI処理開始（通常audio_start前に発火するが、高速応答時は逆転することがある）
+      // listening/idle時のみprocessingへ遷移。speaking中は上書きしない。
       session.on?.('agent_start', () => {
         if (voiceEngineModeRef.current !== 'realtime') return
-        setModeSync('processing')
+        if (modeRef.current === 'listening' || modeRef.current === 'idle') {
+          setModeSync('processing')
+        }
       })
 
       // AI音声出力開始
@@ -998,8 +999,6 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
       setVoiceEngineMode('realtime')
       voiceEngineModeRef.current = 'realtime'
       setModeSync('listening')
-      // WebRTC ICE negotiation後にMic trackをキャッシュ
-      setTimeout(() => findMicTrack(), 800)
 
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -1012,7 +1011,7 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
       voiceEngineModeRef.current = 'off'
       setModeSync('idle')
     }
-  }, [router, addMessage, setModeSync, muteMic, findMicTrack, clearResumeTimer])
+  }, [router, addMessage, setModeSync, muteMic, clearResumeTimer])
 
   const disconnectRealtime = React.useCallback(() => {
     clearResumeTimer()
@@ -1160,8 +1159,9 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname])
 
-  // ─── Watchdog: Realtime stuck → 10秒後にStateのみ強制復旧 ────
-  // Voice stateのみ復旧。Mic直接操作はしない（tool_call_endが担う）。
+  // ─── Watchdog: Realtime stuck → 10秒後にState+Mic強制復旧 ────
+  // tool_start後にtool_endが発火しなかった場合のSafety net。
+  // muteMic(false)でSDK muteも解除し、確実にListening状態へ復帰する。
   React.useEffect(() => {
     if (voiceEngineMode !== 'realtime') return
     if (mode !== 'processing' && mode !== 'working' && mode !== 'speaking') return
@@ -1171,10 +1171,11 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
       if (!realtimeSessionRef.current) return
       isSpeakingRef.current = false
       clearResumeTimer()
+      muteMic(false)
       setModeSync('listening')
     }, 10_000)
     return () => clearTimeout(t)
-  }, [mode, voiceEngineMode, clearResumeTimer, setModeSync])
+  }, [mode, voiceEngineMode, clearResumeTimer, setModeSync, muteMic])
 
   // ─── Logout時のクリーンアップ ─────────────────────────────────
   React.useEffect(() => {
