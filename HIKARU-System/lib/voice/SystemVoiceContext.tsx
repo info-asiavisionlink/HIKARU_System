@@ -17,7 +17,9 @@ import type {
 import type { SystemActionName } from '@/lib/voice/registry/system.actions'
 
 // ─── Realtime 定数 ────────────────────────────────────────────
-const RT_MODEL = 'gpt-4o-realtime-preview'
+// gpt-realtime-2.1 = @openai/agents-realtime v0.17 のデフォルトモデル。
+// SDKのデフォルトconfig（semantic_vad / audio/pcm / gpt-4o-mini-transcribe）と整合する。
+const RT_MODEL = 'gpt-realtime-2.1'
 
 const RT_SYSTEM_PROMPT = `あなたはHIKARU Workerアシスタント「JARVIS」です。
 清掃業務に携わる従業員の音声アシスタントとして、自然な日本語で業務をサポートします。

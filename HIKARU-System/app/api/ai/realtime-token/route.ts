@@ -31,19 +31,12 @@ export async function POST(req: NextRequest) {
     const openai = new OpenAI({ apiKey })
 
     // openai SDK v7: realtime.clientSecrets.create() でEphemeral Tokenを発行
+    // turn_detectionはSDKのsession.update（semantic_vad デフォルト）で設定されるため省略。
     const secret = await openai.realtime.clientSecrets.create({
       session: {
         type:  'realtime',
         model: model as 'gpt-realtime-2.1',
         audio: {
-          input: {
-            turn_detection: {
-              type:                'server_vad',
-              threshold:           0.5,
-              prefix_padding_ms:   200,
-              silence_duration_ms: 500,
-            },
-          },
           output: { voice: voice as 'alloy' },
         },
       },
