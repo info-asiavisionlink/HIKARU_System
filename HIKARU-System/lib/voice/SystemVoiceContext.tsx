@@ -908,23 +908,27 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
         }
       })
       session.on?.('disconnected', () => {
+        // SpeechRecognition自動起動を削除。WebRTCとSpeechRecのMic競合がMic点滅の直接原因。
+        // 切断時はstateをリセットするだけ。MiniVoicePanelにはidleが表示される。
         realtimeSessionRef.current = null
-        if (isSessionRef.current) {
-          setVoiceEngineMode('browser')
-          voiceEngineModeRef.current = 'browser'
-          addMessage('assistant', '接続を切り替えました。そのまま話してください。')
-          setTimeout(() => { if (isSessionRef.current && voiceEngineModeRef.current === 'browser') startListeningRef.current() }, 800)
-        } else {
-          setVoiceEngineMode('off')
-          voiceEngineModeRef.current = 'off'
-          setModeSync('idle')
-        }
+        micTrackRef.current = null
+        clearResumeTimer()
+        isSpeakingRef.current = false
+        setVoiceEngineMode('off')
+        voiceEngineModeRef.current = 'off'
+        setModeSync('idle')
       })
-      session.on?.('error', () => {
+      session.on?.('error', (err: unknown) => {
+        const msg = (err as Error)?.message ?? String(err)
+        console.error('[realtime] session error:', msg)
+        // SpeechRecognition自動起動を削除。Mic競合防止。
         realtimeSessionRef.current = null
-        setVoiceEngineMode('browser')
-        voiceEngineModeRef.current = 'browser'
-        if (isSessionRef.current) startListeningRef.current()
+        micTrackRef.current = null
+        clearResumeTimer()
+        isSpeakingRef.current = false
+        setVoiceEngineMode('off')
+        voiceEngineModeRef.current = 'off'
+        setModeSync('idle')
       })
       session.on?.('agent_start_speech', () => {
         if (voiceEngineModeRef.current !== 'realtime') return
@@ -953,7 +957,13 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
         muteMic(true)
         setModeSync('working')
       })
-      session.on?.('tool_call_end',       () => { if (voiceEngineModeRef.current === 'realtime') setModeSync('processing') })
+      session.on?.('tool_call_end', () => {
+        if (voiceEngineModeRef.current !== 'realtime') return
+        // tool_call_start でmute(true)したMicを必ずここで解除する。
+        // これを忘れるとTool後は永続的にMic OFF → 次発話が拾えない。
+        muteMic(false)
+        setModeSync('processing')
+      })
 
       // 発話テキスト → messages に反映
       session.on?.('user_transcription_done',  (text: string) => {
@@ -979,9 +989,13 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error('[realtime-connect] failed:', msg)
-      setVoiceEngineMode('browser')
-      voiceEngineModeRef.current = 'browser'
-      if (isSessionRef.current) setTimeout(() => startListeningRef.current(), 400)
+      // SpeechRecognition自動起動を削除。Mic競合・点滅の根本原因。
+      // 接続失敗時はidleに戻す。ユーザーが手動でJARVISを再起動できる。
+      realtimeSessionRef.current = null
+      micTrackRef.current = null
+      setVoiceEngineMode('off')
+      voiceEngineModeRef.current = 'off'
+      setModeSync('idle')
     }
   }, [router, addMessage, setModeSync, muteMic, findMicTrack, clearResumeTimer])
 
@@ -1113,13 +1127,17 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     }
   }, [pathname, addMessage, speakAndMaybeResume])
 
-  // ─── ページ遷移後の音声認識フェイルセーフ復旧 ──────────────────
-  // ブラウザがSpeechRecognitionをページ遷移時に中断した場合でも
-  // セッションが生きていればlistening状態を確実に回復する
+  // ─── ページ遷移後のBrowser STT failsafe ────────────────────────
+  // Realtime中はSDKがMicを管理するためSpeechRecognitionは不要。
+  // Fallback(browser)時のみSpeechRecognitionを再起動する。
   React.useEffect(() => {
     if (!isSessionRef.current) return
+    // Realtime接続中はスキップ（startListeningの内部guardと二重保護）
+    if (voiceEngineModeRef.current === 'realtime' || voiceEngineModeRef.current === 'realtime-connecting') return
     const timer = setTimeout(() => {
-      if (isSessionRef.current && modeRef.current === 'idle') {
+      if (!isSessionRef.current) return
+      if (voiceEngineModeRef.current === 'realtime' || voiceEngineModeRef.current === 'realtime-connecting') return
+      if (modeRef.current === 'idle') {
         startListeningRef.current()
       }
     }, 700)
@@ -1127,7 +1145,8 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname])
 
-  // ─── Watchdog: Realtime stuck → 10秒後にListeningへ強制復旧 ─
+  // ─── Watchdog: Realtime stuck → 10秒後にStateのみ強制復旧 ────
+  // Voice stateのみ復旧。Mic直接操作はしない（tool_call_endが担う）。
   React.useEffect(() => {
     if (voiceEngineMode !== 'realtime') return
     if (mode !== 'processing' && mode !== 'working' && mode !== 'speaking') return
@@ -1137,11 +1156,10 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
       if (!realtimeSessionRef.current) return
       isSpeakingRef.current = false
       clearResumeTimer()
-      muteMic(false)
       setModeSync('listening')
     }, 10_000)
     return () => clearTimeout(t)
-  }, [mode, voiceEngineMode, muteMic, clearResumeTimer, setModeSync])
+  }, [mode, voiceEngineMode, clearResumeTimer, setModeSync])
 
   // ─── Logout時のクリーンアップ ─────────────────────────────────
   React.useEffect(() => {
