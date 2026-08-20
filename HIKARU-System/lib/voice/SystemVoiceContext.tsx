@@ -40,20 +40,31 @@ job_manual=マニュアル, job_report=報告書
 ## Write操作（最重要ルール）
 打刻・作業開始・完了・経費申請等のWrite操作は必ずユーザーの確認を取ってから execute_confirmed_action を呼ぶ。
 確認なしに実行ツールを呼ばない。
+Tool Resultが返ってきてから初めて「完了しました」と発話する。
+Tool Resultを待たずに「やりました」「完了しました」と言うことは絶対禁止。
 
-確認フロー:
+確認フロー（必ず守る）:
 1. 「出勤を打刻します。よろしいですか？」と聞く
 2. ユーザーが「はい」等と答える
 3. execute_confirmed_action({ action: 'system.clock_in', params: {} }) を呼ぶ
-4. Tool結果が success なら時刻を発話。失敗なら「打刻できませんでした」と正確に伝える。
+4. Tool Resultが返ってくる
+5. success=trueならToolが返したvoiceReplyをそのまま発話
+6. 失敗なら「打刻できませんでした」と正確に伝える
 
 ## actionとparamsの対応
 - system.clock_in       出勤打刻（params: {}）
 - system.clock_out      退勤打刻（params: {}）
-- system.start_job      作業開始（params: { projectId }）
-- system.complete_job   作業完了（params: { jobId } or { projectId }）
-- system.submit_expense 経費申請（params: { expenseId }）
-- system.mark_notification_read 通知既読（params: { notificationId }）`
+- system.start_job      作業開始（params: { projectId }）※projectIdはget_current_contextかget_today_jobsで取得
+- system.complete_job   作業完了（params: { projectId }）※projectIdは同上
+- system.submit_expense 経費申請（params: { expenseId }）※expenseIdはget_expense_summaryで取得
+- system.mark_notification_read 通知既読（params: { notificationId }）※notificationIdはget_notificationsで取得
+
+## Context解決ルール（ID取得の順序）
+ユーザーが「この作業」「今の案件」等と言った場合:
+1. まず get_current_context を呼んでcurrentProjectIdを確認
+2. projectIdがあれば確認文句でユーザーに確認する
+3. projectIdがなければ get_today_jobs で一覧取得してユーザーに選ばせる
+projectIdを推測・捏造しない。必ずツールで取得した実IDを使う。`
 
 // ─── Realtime Tools（ブラウザ側。credentials: 'include' でAuth）─
 // toolFactory = SDK の tool() 関数。FunctionTool を生成し invoke を持つオブジェクトを返す。
@@ -62,6 +73,7 @@ function buildHikaruRealtimeTools(
   router:       ReturnType<typeof useRouter>,
   projectIdRef: React.MutableRefObject<string | undefined>,
   toolFactory:  (opts: any) => any,
+  pathnameRef:  React.MutableRefObject<string>,
 ) {
   const apiFetch = async (path: string) => {
     const res = await fetch(path, { credentials: 'include' })
@@ -70,6 +82,21 @@ function buildHikaruRealtimeTools(
   }
 
   return [
+    toolFactory({
+      // 現在の画面コンテキストを返す — start_job/complete_jobのprojectId解決に使用
+      name:        'get_current_context',
+      description: '現在開いている画面のURL・案件IDを取得する。作業開始・完了前にprojectIdを確認するために使う。',
+      parameters:  { type: 'object', properties: {}, required: [], additionalProperties: false },
+      execute:     async () => {
+        const path      = pathnameRef.current
+        const projectId = projectIdRef.current
+        const isJobPage = path?.startsWith('/jobs/') && projectId
+        if (isJobPage) {
+          return `現在 /jobs/${projectId} を表示中。currentProjectId=${projectId}。start_jobまたはcomplete_jobのparamsに{ projectId: "${projectId}" }を使用。`
+        }
+        return `現在 ${path || '/home'} を表示中。案件ページではありません。案件操作にはget_today_jobsで一覧を取得してください。`
+      },
+    }),
     toolFactory({
       name:        'get_today_jobs',
       description: '今日の担当作業・案件一覧とIDを取得する',
@@ -961,7 +988,7 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
 
       // tool() ファクトリを取得 — plain objectではなくFunctionTool(invoke付き)を生成するために必須
       const { RealtimeAgent, RealtimeSession, tool: toolFactory } = await import('@openai/agents/realtime') as any
-      const tools   = buildHikaruRealtimeTools(router, projectIdRef, toolFactory)
+      const tools   = buildHikaruRealtimeTools(router, projectIdRef, toolFactory, pathnameRef)
       const agent   = new RealtimeAgent({ name: 'JARVIS Worker Realtime', instructions: RT_SYSTEM_PROMPT, tools })
       // transport: 'webrtc' は ephemeral client secret (ek_...) での接続に必須
       // eagerness: 'high' でsemantic_VADのターン検出を高速化（Latency改善）
