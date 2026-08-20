@@ -45,8 +45,18 @@ export interface SystemVoiceChatMessage {
 
 // ─── セッション設定 ──────────────────────────────────────────
 const SESSION_STOP_RE    = /^(終了|やめて|止めて|ストップ|セッション終了|会話終了|閉じて|おしまい|終わり)$/
-const CONFIRM_YES_RE     = /^(はい|うん|ええ|そうです|お願い|お願いします|確認|実行|よろしく|よろしい|OK|オーケー|いいよ|いいです)$/i
-const CONFIRM_NO_RE      = /^(いいえ|やめて|キャンセル|やめる|いや|ノー|やっぱりやめ|やっぱり)$/i
+// 確認「はい」判定 — 正確な完全一致ではなくキーワード包含で判定（STT誤認識に対応）
+const CONFIRM_YES_WORDS  = ['はい', 'うん', 'ええ', 'そうです', 'お願い', 'よろしく', 'よろし', 'OK', 'ok', 'オーケー', 'いいよ', 'いいです', 'いい', 'やって', 'してください', '確認', '実行']
+const CONFIRM_NO_WORDS   = ['いいえ', 'やめて', 'キャンセル', 'やめる', 'いや', 'ノー', 'やっぱり', 'なし', '取消']
+
+function isConfirmYes(text: string): boolean {
+  if (text.length > 25) return false // 長い発話は別の意図
+  return CONFIRM_YES_WORDS.some(w => text.includes(w))
+}
+function isConfirmNo(text: string): boolean {
+  if (text.length > 25) return false
+  return CONFIRM_NO_WORDS.some(w => text.includes(w))
+}
 const STANDBY_MS         = 60_000       // 60s 無発話 → Standby表示
 const SESSION_TIMEOUT_MS = 5 * 60_000  // Standby後5分 → Session終了
 
@@ -455,11 +465,11 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
       setIsStandby(false)
       setTranscript(utterance)
       addMessage('user', utterance)
-      if (CONFIRM_YES_RE.test(utterance.trim())) {
+      if (isConfirmYes(utterance.trim())) {
         await executeConfirmedAction(pending)
         return
       }
-      if (CONFIRM_NO_RE.test(utterance.trim())) {
+      if (isConfirmNo(utterance.trim())) {
         conversationCtxRef.current = { ...conversationCtxRef.current, pendingConfirmation: undefined }
         const msg = 'キャンセルしました。'
         setResponse(msg)
@@ -480,6 +490,34 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     const localResult = resolveLocalIntent(utterance)
     if (localResult?.action && localResult.confidence >= 0.6) {
       await executeAction(localResult)
+      return
+    }
+
+    // ─── ローカル書き込み提案（AI不要・即時応答）───────────────────
+    // 出勤/退勤打刻は毎日使う最頻出操作なのでAI経由を省略
+    const text = utterance.trim()
+    const hasClockIn  = /出勤|チェックイン|始業|きました|来ました/.test(text) || (text.includes('打刻') && !text.includes('退勤') && !text.includes('帰'))
+    const hasClockOut = /退勤|チェックアウト|終業|帰り|帰ります|上がり/.test(text)
+    if (hasClockIn && !hasClockOut) {
+      const confirm: PendingConfirmation = {
+        action: 'system.clock_in', params: {}, safetyLevel: 3,
+        message: '出勤を打刻します。よろしいですか？',
+        expiresAt: Date.now() + 5 * 60 * 1000,
+      }
+      conversationCtxRef.current = { ...conversationCtxRef.current, pendingConfirmation: confirm }
+      const reply = '出勤を打刻します。よろしいですか？'
+      setResponse(reply); addMessage('assistant', reply); speakAndMaybeResume(reply)
+      return
+    }
+    if (hasClockOut) {
+      const confirm: PendingConfirmation = {
+        action: 'system.clock_out', params: {}, safetyLevel: 3,
+        message: '退勤を打刻します。よろしいですか？',
+        expiresAt: Date.now() + 5 * 60 * 1000,
+      }
+      conversationCtxRef.current = { ...conversationCtxRef.current, pendingConfirmation: confirm }
+      const reply = '退勤を打刻します。よろしいですか？'
+      setResponse(reply); addMessage('assistant', reply); speakAndMaybeResume(reply)
       return
     }
 

@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const result = await run(workerJarvisAgent, inputText, {
-      maxTurns:          5,
+      maxTurns:          3,
       context:           agentCtx,
       previousResponseId: previousResponseId ?? undefined,
     })

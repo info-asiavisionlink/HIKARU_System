@@ -382,7 +382,7 @@ action には以下を使用:
 export const workerJarvisAgent = new Agent<WorkerAgentContext>({
   name:         'JARVIS Worker',
   instructions: SYSTEM_PROMPT,
-  model:        'gpt-4o',
+  model:        'gpt-4o-mini',
   tools:        [
     getTodayJobsTool,
     getJobDetailsTool,
