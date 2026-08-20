@@ -419,6 +419,7 @@ export async function POST(req: NextRequest) {
         const { expenseId } = params
         if (!expenseId) return Response.json({ error: 'expenseId required' }, { status: 400 })
 
+        // POST /api/expenses/[id]/submit → { expense: {} }
         const res = await fetch(`${req.nextUrl.origin}/api/expenses/${expenseId}/submit`, {
           method:  'POST',
           headers: { Cookie: req.headers.get('cookie') ?? '' },
@@ -431,13 +432,27 @@ export async function POST(req: NextRequest) {
           resourceType: 'expense', resourceId: expenseId,
         })
         if (!res.ok) return Response.json({ error: data?.error ?? '経費申請の提出に失敗しました。' }, { status: res.status })
-        return Response.json({ success: true, voiceReply: '経費申請を提出しました。' })
+        // Read-back: GET /api/expenses/[id] → { expense: {} } でstatus確認
+        const rbRes = await fetch(`${req.nextUrl.origin}/api/expenses/${expenseId}`, {
+          headers: { Cookie: req.headers.get('cookie') ?? '' },
+        })
+        const rbData = await rbRes.json()
+        const confirmedStatus = rbData?.expense?.status
+        if (confirmedStatus !== 'submitted') {
+          return Response.json({ error: '申請処理を確認できませんでした。もう一度確認してください。' }, { status: 500 })
+        }
+        const CATEGORY_MAP: Record<string, string> = {
+          transport: '交通費', parking: '駐車場代', supplies: '備品', consumables: '消耗品', other: 'その他',
+        }
+        const cat = CATEGORY_MAP[rbData.expense.category] ?? rbData.expense.category
+        return Response.json({ success: true, voiceReply: `${cat}¥${rbData.expense.amount}の経費申請を提出しました。管理者の確認をお待ちください。` })
       }
 
       // ─── L4: withdraw_expense ─────────────────────────────
       case 'system.withdraw_expense': {
         const { expenseId } = params
         if (!expenseId) return Response.json({ error: 'expenseId required' }, { status: 400 })
+        // POST /api/expenses/[id]/withdraw → status が 'withdrawn' になる（'draft'ではない）
         const res = await fetch(`${req.nextUrl.origin}/api/expenses/${expenseId}/withdraw`, {
           method:  'POST',
           headers: { Cookie: req.headers.get('cookie') ?? '' },
@@ -450,7 +465,16 @@ export async function POST(req: NextRequest) {
           resourceType: 'expense', resourceId: expenseId,
         })
         if (!res.ok) return Response.json({ error: data?.error ?? '取り下げに失敗しました。' }, { status: res.status })
-        return Response.json({ success: true, voiceReply: '経費申請を取り下げました。下書きに戻りました。' })
+        // Read-back: status確認
+        const rbRes = await fetch(`${req.nextUrl.origin}/api/expenses/${expenseId}`, {
+          headers: { Cookie: req.headers.get('cookie') ?? '' },
+        })
+        const rbData = await rbRes.json()
+        const confirmedStatus = rbData?.expense?.status
+        if (confirmedStatus !== 'withdrawn') {
+          return Response.json({ error: '取り下げ処理を確認できませんでした。もう一度確認してください。' }, { status: 500 })
+        }
+        return Response.json({ success: true, voiceReply: '経費申請を取り下げました。（ステータス: 取り下げ）' })
       }
 
       // ─── L3: mark_notification_read ───────────────────────

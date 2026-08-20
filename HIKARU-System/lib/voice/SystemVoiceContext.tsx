@@ -74,15 +74,17 @@ job_manual=マニュアル, job_report=報告書
 - get_job_details: 案件詳細・作業状態・写真進捗を取得。projectId省略時は現在ページを使用。
 - run_quality_evaluation: AI品質評価を実行。jobIdが必要。get_active_jobで取得。
 - get_expense_detail: 経費詳細確認。expenseId省略時は現在ページから自動取得。
-- create_expense_draft: 経費下書き作成。amount/categoryが必要。ユーザーへ確認後に呼ぶ。
+- create_expense_draft: 経費下書き作成。amount・categoryが必要。確認後に呼ぶ。結果にexpenseIdが含まれる。
+- edit_expense_draft: 下書き状態の経費を編集。expenseId必須。変更フィールドのみ指定。
 - generate_report: AI品質報告書を生成。jobIdが必要。
 
-## 経費操作フロー
-「経費一覧教えて」→ get_expense_summary → 一覧発話(IDを含む)
-「1件目詳細見せて」→ get_expense_detail(expenseId=取得したID) → 詳細発話
-「これを申請して」→ get_current_context→expenseId確認 → 「申請します？」→ execute_confirmed_action(submit_expense)
-「取り下げたい」→ get_current_context→expenseId確認 → 「取り下げます？」→ execute_confirmed_action(withdraw_expense)
-「経費を登録したい」→ get_expense_detailは不要。「何の経費ですか？」→「金額は？」→ Confirmation → create_expense_draft
+## 経費操作完全フロー（★必ずこの手順）
+「経費一覧教えて」→ get_expense_summary → 「N件あります。1番目:交通費¥500 下書き expenseId=UUID」
+「1件目の詳細教えて」→ get_expense_detail(expenseId=一覧のUUID) → 詳細発話
+「これを編集して」→ get_expense_detail確認 → 変更内容ヒアリング → 「¥500→¥800に変更します？」→ edit_expense_draft
+「申請して」→ get_current_context or 前の操作のexpenseId → 「申請します？」→ execute_confirmed_action(submit_expense,{expenseId})
+「取り下げて」→ Confirmation → execute_confirmed_action(withdraw_expense,{expenseId}) → status=withdrawnになる（draft=下書きではない）
+「経費登録して」→「何の経費？」→「金額は？」→ Confirmation → create_expense_draft → expenseId返却
 
 ## Context解決ルール（ID取得の順序）
 ユーザーが「この作業」「今の案件」等と言った場合:
@@ -179,13 +181,17 @@ function buildHikaruRealtimeTools(
       },
     }),
     toolFactory({
+      // ★ GET /api/expenses → { expenses: [...] } が正しいResponse Contract
+      //    data.data ではなく data.expenses を使う（修正前はここが原因でデータ0件になっていた）
       name:        'get_expense_summary',
-      description: '提出可能な経費申請（下書き）一覧とIDを確認する',
+      description: '自分の経費一覧を取得する。IDを含むので「1件目」等の選択に使える。',
       parameters:  { type: 'object', properties: {}, required: [], additionalProperties: false },
       execute:     async () => {
         const data = await apiFetch('/api/expenses')
         if (!data) return '経費情報を取得できませんでした。'
-        const items = Array.isArray(data?.data) ? data.data : []
+        // API returns { expenses: [...], category_labels: {...} }
+        const items: any[] = Array.isArray(data?.expenses) ? data.expenses : []
+        console.log('[JARVIS-expense] get_expense_summary count:', items.length)
         const CATEGORY: Record<string, string> = {
           transport: '交通費', parking: '駐車場代', supplies: '備品', consumables: '消耗品', other: 'その他',
         }
@@ -194,12 +200,13 @@ function buildHikaruRealtimeTools(
           rejected: '却下', settled: '精算済み', withdrawn: '取り下げ',
         }
         if (items.length === 0) return '経費はありません。'
-        const drafts = items.filter((e: any) => e.status === 'draft')
-        const submitted = items.filter((e: any) => e.status === 'submitted')
+        const drafts    = items.filter((e: any) => e.status === 'draft').length
+        const submitted = items.filter((e: any) => e.status === 'submitted').length
+        // AIが「1件目」を参照できるよう番号とexpenseIdを明示
         const list = items.slice(0, 5).map((e: any, i: number) =>
-          `${i + 1}: ${CATEGORY[e.category] ?? e.category} ¥${e.amount} (${STATUS[e.status] ?? e.status}) [id:${e.id}]`
-        ).join(', ')
-        return `経費${items.length}件（下書き${drafts.length}件・申請中${submitted.length}件）。${list}`
+          `${i + 1}番目: ${CATEGORY[e.category] ?? e.category} ¥${e.amount} ${STATUS[e.status] ?? e.status} expenseId=${e.id}`
+        ).join(' / ')
+        return `経費${items.length}件（下書き${drafts}件・申請中${submitted}件）。${list}`
       },
     }),
     toolFactory({
@@ -217,10 +224,14 @@ function buildHikaruRealtimeTools(
         // 現在URLから expenseId を取得
         const pathMatch = pathnameRef.current?.match(/^\/expenses\/([^/]+)$/)
         const eid = expenseId || pathMatch?.[1]
-        if (!eid) return '経費詳細を確認するにはexpenseIdが必要です。経費一覧を開いてご確認ください。'
+        if (!eid) return '経費詳細を確認するにはexpenseIdが必要です。get_expense_summaryで一覧を取得してください。'
+        console.log('[JARVIS-expense] get_expense_detail expenseId:', eid)
+        // GET /api/expenses/[id] → { expense: {} } が正しいResponse Contract
         const res = await fetch(`/api/expenses/${eid}`, { credentials: 'include' })
-        if (!res.ok) return '経費情報を取得できませんでした。'
-        const { expense } = await res.json()
+        console.log('[JARVIS-expense] get_expense_detail status:', res.status)
+        if (!res.ok) return `経費情報を取得できませんでした(${res.status})。`
+        const resJson = await res.json()
+        const expense = resJson?.expense
         if (!expense) return '経費が見つかりませんでした。'
         const CATEGORY: Record<string, string> = {
           transport: '交通費', parking: '駐車場代', supplies: '備品', consumables: '消耗品', other: 'その他',
@@ -514,11 +525,70 @@ function buildHikaruRealtimeTools(
             }),
           })
           const data = await res.json()
+          // POST /api/expenses → { expense: {} } status 201
           if (!res.ok) return `経費の登録に失敗しました: ${data.error ?? 'エラー'}`
-          return `${LABELS[category] ?? category}¥${numAmount.toLocaleString()}を下書きとして登録しました。経費申請画面から「申請する」ボタンで送信できます。`
+          const created = data?.expense
+          const eid = created?.id ?? '不明'
+          console.log('[JARVIS-expense] create_expense_draft created expenseId:', eid)
+          return `${LABELS[category] ?? category}¥${numAmount.toLocaleString()}を下書きとして登録しました。expenseId=${eid}。申請するにはsubmit_expense(params:{expenseId:"${eid}"})を呼ぶか経費画面から送信できます。`
         } catch {
           return '経費の登録中にエラーが発生しました。'
         }
+      },
+    }),
+    toolFactory({
+      // 経費編集 — draft状態のみ編集可能。PUT /api/expenses/[id] を使用。
+      name:        'edit_expense_draft',
+      description: '下書き状態の経費を編集する。draft状態のみ可能。変更するフィールドだけ指定する。',
+      parameters:  {
+        type:       'object',
+        properties: {
+          expenseId:    { type: 'string' },
+          amount:       { type: 'string' },
+          category:     { type: 'string', enum: ['transport', 'parking', 'supplies', 'consumables', 'other'] },
+          description:  { type: 'string' },
+          expense_date: { type: 'string' },
+          note:         { type: 'string' },
+        },
+        required:             ['expenseId'],
+        additionalProperties: false,
+      },
+      execute: async (input: any) => {
+        const { expenseId, amount, category, description, expense_date, note } = input ?? {}
+        // 現在URLからも取得可能
+        const pathMatch = pathnameRef.current?.match(/^\/expenses\/([^/]+)$/)
+        const eid = expenseId || pathMatch?.[1]
+        if (!eid) return '編集する経費のIDが必要です。get_expense_summaryで取得してください。'
+
+        const update: Record<string, any> = {}
+        if (amount !== undefined)       update.amount       = Number(amount)
+        if (category !== undefined)     update.category     = category
+        if (description !== undefined)  update.description  = description || null
+        if (expense_date !== undefined) update.expense_date = expense_date
+        if (note !== undefined)         update.note         = note || null
+
+        if (Object.keys(update).length === 0) return '変更する項目が指定されていません。'
+        if (update.amount !== undefined && (isNaN(update.amount) || update.amount <= 0)) {
+          return '金額が正しくありません。'
+        }
+
+        console.log('[JARVIS-expense] edit_expense_draft:', eid, update)
+        // PUT /api/expenses/[id] → { expense: {} }
+        const res = await fetch(`/api/expenses/${eid}`, {
+          method:      'PUT',
+          headers:     { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body:        JSON.stringify(update),
+        })
+        const data = await res.json()
+        if (!res.ok) return `経費の編集に失敗しました: ${data.error ?? 'エラー'}`
+        // Read-back from response
+        const updated = data?.expense
+        if (!updated) return '編集完了しましたが確認できませんでした。'
+        const LABELS: Record<string, string> = {
+          transport: '交通費', parking: '駐車場代', supplies: '備品', consumables: '消耗品', other: 'その他',
+        }
+        return `経費を更新しました。${LABELS[updated.category] ?? updated.category} ¥${updated.amount}。${updated.expense_date}。expenseId=${eid}`
       },
     }),
   ]
