@@ -100,6 +100,19 @@ IDを推測・捏造しない。必ずツールで取得した実IDを使う。
 「休憩終わって」→execute_confirmed_action(break_end)→発話
 「退勤して」→execute_confirmed_action(clock_out)→発話
 
+## シフト操作フロー（★必ずこの手順）
+「今日のシフト教えて」→ get_shift_list(date_from=今日YYYY-MM-DD, date_to=今日) → 一覧発話(shiftId含む)
+「今週のシフト」→ get_shift_list(date_from=今週月曜, date_to=今週日曜) → 一覧発話
+「明日シフト登録して」→ get_assigned_projects_for_shift → 案件確認 → 開始/終了時刻ヒアリング
+確認例:「明日、○○店、9時〜17時でシフトを登録します。よろしいですか？」
+「はい」→ create_shift(projectId=実ID, shiftDate=YYYY-MM-DD, startTime="09:00", endTime="17:00") → Read-back
+「このシフト編集して」→ 変更内容ヒアリング → edit_shift(shiftId, 現在値も含む全required field, 変更値)
+「このシフト取り消して」→「取消します？」→ execute_confirmed_action(cancel_shift,{shiftId:"実UUID"})
+- ★ projectIdはget_assigned_projects_for_shiftで取得した実IDのみ使用
+- ★ shiftIdはget_shift_listで取得した実IDのみ。推測・捏造禁止
+- ★ 時刻はHH:MM形式(24時間)。edit_shiftはshiftDate・startTime・endTimeをすべて指定
+- ★ scheduled状態のみ編集・取消可。confirmed/completedは変更不可
+
 ## 勤怠修正申請フロー（★必ずこの手順）
 「勤怠修正したい」→ get_attendance_for_correction(date=YYYY-MM-DD) → 現在の出勤/退勤/休憩時刻を取得
 「出勤時間を8時50分に」→ 修正後時刻ヒアリング確認 → 理由ヒアリング
@@ -607,6 +620,184 @@ function buildHikaruRealtimeTools(
       },
     }),
 
+    // ─── シフト操作ツール群 ───────────────────────────────────
+
+    toolFactory({
+      // シフト一覧 — GET /api/shifts?date_from&date_to → { shifts: [...] }
+      name:        'get_shift_list',
+      description: '自分のシフト一覧を取得する。shiftIdを含む。date_from/date_toでYYYY-MM-DD形式の日付範囲を指定。',
+      parameters:  {
+        type:       'object',
+        properties: {
+          date_from: { type: 'string', description: '開始日 YYYY-MM-DD。省略時は今日。' },
+          date_to:   { type: 'string', description: '終了日 YYYY-MM-DD。省略時はdate_fromと同日。' },
+        },
+        required:             [],
+        additionalProperties: false,
+      },
+      execute: async (input: any) => {
+        const today   = new Date().toISOString().split('T')[0]
+        const from    = (input?.date_from ?? today).trim()
+        const to      = (input?.date_to   ?? from).trim()
+        const data    = await apiFetch(`/api/shifts?date_from=${from}&date_to=${to}`)
+        if (!data) return 'シフト情報を取得できませんでした。'
+        const shifts: any[] = Array.isArray(data?.shifts) ? data.shifts : []
+        if (shifts.length === 0) return `${from}〜${to}のシフトはありません。`
+        const STATUS: Record<string, string> = {
+          scheduled: '予定', confirmed: '確定', in_progress: '作業中', completed: '完了', cancelled: '取消済',
+        }
+        const DAYS = ['日', '月', '火', '水', '木', '金', '土']
+        const items = shifts.slice(0, 7).map((s: any, i: number) => {
+          const d       = new Date(s.shift_date + 'T00:00:00')
+          const day     = DAYS[d.getDay()]
+          const start   = s.start_time.slice(0, 5)
+          const end     = s.end_time.slice(0, 5)
+          const status  = STATUS[s.status] ?? s.status
+          const project = s.projects?.name ?? '案件未設定'
+          const canEdit = s.status === 'scheduled' ? ' 編集/取消可' : ''
+          return `${i + 1}件目: ${s.shift_date}(${day}) ${start}〜${end} ${project} ${status}${canEdit} shiftId=${s.id}`
+        }).join(' / ')
+        return `シフト${shifts.length}件。${items}`
+      },
+    }),
+
+    toolFactory({
+      // 担当案件取得（シフト登録用）— GET /api/jobs → { data: [...] }
+      name:        'get_assigned_projects_for_shift',
+      description: 'シフト登録に使える担当案件一覧を取得する。projectIdを含む。',
+      parameters:  { type: 'object', properties: {}, required: [], additionalProperties: false },
+      execute:     async () => {
+        const data = await apiFetch('/api/jobs')
+        if (!data) return '案件情報を取得できませんでした。'
+        const projects: any[] = Array.isArray(data?.data) ? data.data : []
+        if (projects.length === 0) return '担当案件がありません。管理者にお問い合わせください。'
+        const items = projects.map((p: any, i: number) =>
+          `${i + 1}件目: ${p.name}${p.location_name ? `（${p.location_name}）` : ''} projectId=${p.id}`
+        ).join(' / ')
+        return `担当案件${projects.length}件。${items}`
+      },
+    }),
+
+    toolFactory({
+      // シフト新規登録 — POST /api/shifts → { shift: {} } status 201
+      // ★ 呼ぶ前に必ず日時・案件を読み上げてユーザー確認を取ること
+      name:        'create_shift',
+      description: 'シフトを新規登録する。projectId・shiftDate・startTime・endTimeが必須。必ず事前確認してから呼ぶ。',
+      parameters:  {
+        type:       'object',
+        properties: {
+          projectId: { type: 'string', description: 'get_assigned_projects_for_shiftで取得した実ID' },
+          shiftDate: { type: 'string', description: '対象日 YYYY-MM-DD' },
+          startTime: { type: 'string', description: '開始時刻 HH:MM（例: 09:00）' },
+          endTime:   { type: 'string', description: '終了時刻 HH:MM（例: 17:00）' },
+          notes:     { type: 'string', description: '備考（任意）' },
+        },
+        required:             ['projectId', 'shiftDate', 'startTime', 'endTime'],
+        additionalProperties: false,
+      },
+      execute: async (input: any) => {
+        const { projectId, shiftDate, startTime, endTime, notes } = input ?? {}
+        if (!projectId) return '案件IDが必要です。get_assigned_projects_for_shiftで取得してください。'
+        if (!shiftDate) return '日付が必要です（YYYY-MM-DD形式）。'
+
+        // HH:MM 形式へ正規化
+        const parseTime = (s: string): string | null => {
+          if (!s) return null
+          const m1 = s.trim().match(/^(\d{1,2}):(\d{2})$/)
+          if (m1) return `${m1[1].padStart(2, '0')}:${m1[2]}`
+          const m2 = s.trim().match(/^(\d{1,2})時(半|\d{1,2}分?)?/)
+          if (m2) {
+            const h   = m2[1].padStart(2, '0')
+            const min = !m2[2] ? '00' : m2[2] === '半' ? '30' : m2[2].replace(/[分]/g, '').padStart(2, '0')
+            return `${h}:${min}`
+          }
+          return null
+        }
+        const st = parseTime(startTime)
+        const et = parseTime(endTime)
+        if (!st) return `開始時刻の形式が不正: ${startTime}。HH:MM形式で指定してください。`
+        if (!et) return `終了時刻の形式が不正: ${endTime}。HH:MM形式で指定してください。`
+        if (st >= et) return '終了時刻は開始時刻より後にしてください。'
+
+        console.log('[JARVIS-shift] create_shift:', { projectId, shiftDate, st, et })
+        const res = await fetch('/api/shifts', {
+          method:      'POST',
+          headers:     { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body:        JSON.stringify({ project_id: projectId, shift_date: shiftDate, start_time: st, end_time: et, notes: notes || null }),
+        })
+        const data = await res.json()
+        // POST /api/shifts → { shift: {} } status 201
+        if (!res.ok) return `シフトの登録に失敗しました: ${data.error ?? 'エラー'}`
+        const shift = data?.shift
+        const sid   = shift?.id ?? '不明'
+        console.log('[JARVIS-shift] created shiftId:', sid)
+        const projectName = shift?.projects?.name ?? ''
+        return `${shiftDate} ${st}〜${et}${projectName ? ' ' + projectName : ''}のシフトを登録しました。shiftId=${sid}。編集はedit_shift、取消はexecute_confirmed_action(cancel_shift,{shiftId:"${sid}"})を使用。`
+      },
+    }),
+
+    toolFactory({
+      // シフト編集 — PUT /api/shifts/[id] → { shift: {} }
+      // scheduled状態のみ編集可。shiftDate・startTime・endTimeは変更しない場合も現在値を指定すること。
+      name:        'edit_shift',
+      description: '「scheduled」状態のシフトを編集する。shiftId・shiftDate・startTime・endTimeは必須（現在値を維持する場合もget_shift_listの値を使って指定）。呼ぶ前に内容確認すること。',
+      parameters:  {
+        type:       'object',
+        properties: {
+          shiftId:   { type: 'string', description: '編集対象のシフトID（get_shift_listで取得）' },
+          projectId: { type: 'string', description: '案件ID（変更する場合のみ、変更しない場合も現在値を指定）' },
+          shiftDate: { type: 'string', description: '日付 YYYY-MM-DD（変更しない場合も現在値を指定）' },
+          startTime: { type: 'string', description: '開始時刻 HH:MM（変更しない場合も現在値を指定）' },
+          endTime:   { type: 'string', description: '終了時刻 HH:MM（変更しない場合も現在値を指定）' },
+          notes:     { type: 'string', description: '備考（任意・省略時はそのまま）' },
+        },
+        required:             ['shiftId', 'shiftDate', 'startTime', 'endTime'],
+        additionalProperties: false,
+      },
+      execute: async (input: any) => {
+        const { shiftId, projectId, shiftDate, startTime, endTime, notes } = input ?? {}
+        if (!shiftId) return '編集するシフトのIDが必要です。get_shift_listで取得してください。'
+
+        const parseTime = (s: string): string | null => {
+          if (!s) return null
+          const m1 = s.trim().match(/^(\d{1,2}):(\d{2})$/)
+          if (m1) return `${m1[1].padStart(2, '0')}:${m1[2]}`
+          const m2 = s.trim().match(/^(\d{1,2})時(半|\d{1,2}分?)?/)
+          if (m2) {
+            const h   = m2[1].padStart(2, '0')
+            const min = !m2[2] ? '00' : m2[2] === '半' ? '30' : m2[2].replace(/[分]/g, '').padStart(2, '0')
+            return `${h}:${min}`
+          }
+          return null
+        }
+        const st = parseTime(startTime)
+        const et = parseTime(endTime)
+        if (!st) return `開始時刻の形式が不正: ${startTime}。HH:MM形式で指定してください。`
+        if (!et) return `終了時刻の形式が不正: ${endTime}。HH:MM形式で指定してください。`
+        if (st >= et) return '終了時刻は開始時刻より後にしてください。'
+
+        const body: Record<string, unknown> = { shift_date: shiftDate, start_time: st, end_time: et }
+        if (projectId) body.project_id = projectId
+        if (notes !== undefined) body.notes = notes || null
+
+        console.log('[JARVIS-shift] edit_shift:', shiftId, body)
+        // PUT /api/shifts/[id] → { shift: {} }
+        const res = await fetch(`/api/shifts/${shiftId}`, {
+          method:      'PUT',
+          headers:     { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body:        JSON.stringify(body),
+        })
+        const data = await res.json()
+        if (!res.ok) return `シフトの編集に失敗しました: ${data.error ?? 'エラー'}`
+        const updated = data?.shift
+        if (!updated) return '編集しましたが確認できませんでした。'
+        const projectName = updated.projects?.name ?? ''
+        return `シフトを更新しました。${updated.shift_date} ${updated.start_time.slice(0, 5)}〜${updated.end_time.slice(0, 5)}${projectName ? ' ' + projectName : ''}。shiftId=${shiftId}`
+      },
+    }),
+
     // ─── 勤怠修正申請ツール群 ─────────────────────────────────
 
     toolFactory({
@@ -921,11 +1112,13 @@ async function fetchL1Result(action: SystemActionName, projectId?: string): Prom
         return none(items.length === 0 ? '今後の予定はありません。' : `スケジュールに${items.length}件の予定があります。`)
       }
       case 'system.get_shifts': {
-        const res = await fetch('/api/shifts', { credentials: 'include' })
+        // GET /api/shifts → { shifts: [...] } が正しいResponse Contract
+        const today = new Date().toISOString().split('T')[0]
+        const res = await fetch(`/api/shifts?date_from=${today}`, { credentials: 'include' })
         if (!res.ok) return none('シフトを取得できませんでした。')
         const data = await res.json()
-        const items = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : [])
-        return none(items.length === 0 ? 'シフトはありません。' : `シフトが${items.length}件登録されています。`)
+        const items = Array.isArray(data?.shifts) ? data.shifts : []
+        return none(items.length === 0 ? 'シフトはありません。' : `今後のシフトが${items.length}件あります。`)
       }
       case 'system.get_attendance':
         return none('勤怠画面に詳細を表示します。')

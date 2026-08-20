@@ -477,6 +477,33 @@ export async function POST(req: NextRequest) {
         return Response.json({ success: true, voiceReply: '経費申請を取り下げました。（ステータス: 取り下げ）' })
       }
 
+      // ─── L3: cancel_shift ─────────────────────────────────
+      // PATCH /api/shifts/[id] → { shift: { id, status } }
+      // scheduled のみ取消可。confirmed/completed は不可。
+      case 'system.cancel_shift': {
+        const { shiftId } = params
+        if (!shiftId) return Response.json({ error: 'shiftId required' }, { status: 400 })
+
+        const res = await fetch(`${req.nextUrl.origin}/api/shifts/${shiftId}`, {
+          method:  'PATCH',
+          headers: { Cookie: req.headers.get('cookie') ?? '' },
+        })
+        const data = await res.json()
+        logVoiceAudit({
+          source: 'jarvis_voice', actor: uid, actorType: 'worker',
+          companyId: profile.company_id, action, safetyLevel: level,
+          confirmed: true, result: res.ok ? 'success' : 'failed',
+          resourceType: 'shift', resourceId: shiftId,
+        })
+        if (!res.ok) return Response.json({ error: data?.error ?? '取消に失敗しました。' }, { status: res.status })
+        // Read-back: PATCHレスポンスの { shift: { status } } で確認
+        const confirmedStatus = data?.shift?.status
+        if (confirmedStatus !== 'cancelled') {
+          return Response.json({ error: 'シフト取消処理を確認できませんでした。もう一度確認してください。' }, { status: 500 })
+        }
+        return Response.json({ success: true, voiceReply: 'シフトを取り消しました。' })
+      }
+
       // ─── L3: withdraw_correction ──────────────────────────
       // PATCH /api/attendance/corrections/[id]/withdraw → { correction: { id, status, updated_at } }
       case 'system.withdraw_correction': {
