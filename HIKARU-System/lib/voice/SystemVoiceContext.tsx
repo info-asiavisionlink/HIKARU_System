@@ -100,6 +100,13 @@ IDを推測・捏造しない。必ずツールで取得した実IDを使う。
 「休憩終わって」→execute_confirmed_action(break_end)→発話
 「退勤して」→execute_confirmed_action(clock_out)→発話
 
+## プロフィールフロー
+「プロフィール教えて」→ get_profile → 氏名・メール・電話・権限を読み上げ
+「電話番号教えて」「名前は？」等 → get_profile → 該当項目のみ回答
+「プロフィール変更したい」→「現在プロフィールの変更はWorkerアプリから直接行えません。管理者にご連絡ください。」
+- ★ プロフィールはRead-only。更新API・編集UIが存在しないため変更不可
+- ★ role・company・permission・emailをVoiceで変更しない
+
 ## 通知フロー（★必ずこの手順）
 「未読通知何件？」→ get_notifications → 「未読N件あります」と発話
 「通知教えて」→ get_notifications → 「N件（未読M件）あります。1件目:シフト更新 notificationId=UUID」
@@ -665,6 +672,29 @@ function buildHikaruRealtimeTools(
       },
     }),
 
+    // ─── プロフィールツール ───────────────────────────────────
+
+    toolFactory({
+      // GET /api/profile → { profile: { id, name, email, phone, role } }
+      // プロフィールはRead-only。更新API・編集UIが存在しないため変更不可。
+      name:        'get_profile',
+      description: '自分のプロフィール情報（氏名・メール・電話・権限）を取得する。プロフィールは読み取り専用。',
+      parameters:  { type: 'object', properties: {}, required: [], additionalProperties: false },
+      execute:     async () => {
+        const data = await apiFetch('/api/profile')
+        if (!data) return 'プロフィール情報を取得できませんでした。'
+        // GET /api/profile → { profile: { id, name, email, phone, role } }
+        const profile = data?.profile
+        if (!profile) return 'プロフィールが見つかりませんでした。'
+        const ROLE: Record<string, string> = {
+          admin: '管理者', worker: '作業者', client: 'オーナー',
+        }
+        const role  = ROLE[profile.role] ?? profile.role ?? '不明'
+        const phone = profile.phone ? profile.phone : '未登録'
+        return `お名前: ${profile.name}。メール: ${profile.email}。電話番号: ${phone}。権限: ${role}。プロフィールの変更はアプリ上では行えません。管理者にご連絡ください。`
+      },
+    }),
+
     // ─── シフト操作ツール群 ───────────────────────────────────
 
     toolFactory({
@@ -1190,18 +1220,20 @@ async function fetchL1Result(action: SystemActionName, projectId?: string): Prom
         return { text, data: { type: 'manual_list', items } }
       }
       case 'system.get_profile': {
+        // GET /api/profile → { profile: { id, name, email, phone, role } }
         const res = await fetch('/api/profile', { credentials: 'include' })
         if (!res.ok) return none('プロフィールを取得できませんでした。')
         const data = await res.json()
-        const name = data?.data?.name ?? data?.name
+        const name = data?.profile?.name
         return none(name ? `${name}さんのプロフィールです。` : 'プロフィール画面を確認してください。')
       }
       case 'system.get_job_detail': {
         if (!projectId) return none('案件の画面を開いてから確認してください。')
+        // GET /api/projects/[projectId] → { project: {}, spots: [], todayJob: {}, photos: [] }
         const res = await fetch(`/api/projects/${projectId}`, { credentials: 'include' })
         if (!res.ok) return none('案件情報を取得できませんでした。')
         const data = await res.json()
-        const name = data?.data?.name ?? data?.name
+        const name = data?.project?.name
         return none(name ? `現在の案件は${name}です。作業内容を確認しますか？` : '案件詳細を確認してください。')
       }
       default:
