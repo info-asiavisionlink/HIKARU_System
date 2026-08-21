@@ -75,17 +75,24 @@ job_before=Before写真画面, job_after=After写真画面, job_evaluation=AI品
 「1件目開いて」→ navigate_to(job_detail, jobId=取得したID)
 「詳細教えて」→ get_job_details(projectId) → 詳細を読み上げ
 「この作業開始して」→ get_current_context → projectId確認 → 「開始します？」→ execute_confirmed_action(start_job) → 開始成功後「Before画面を開きますか？」
-「品質評価して」→ get_active_job(projectId) → jobId取得 → 「評価を実行します？」→ run_quality_evaluation(jobId) → 結果読み上げ
+「Before写真画面開いて」→ navigate_to(job_before, jobId=currentProjectId) → /jobs/[id]/before へNavigation
+「After写真画面開いて」→ navigate_to(job_after, jobId=currentProjectId) → /jobs/[id]/after へNavigation
+「品質評価画面開いて」→ navigate_to(job_evaluation, jobId=currentProjectId) → 画面移動のみ
+「品質評価して」→ get_active_job(projectId) → jobId取得 → 「評価を実行します？」→ run_quality_evaluation(jobId) → スコア・合格数読み上げ
 「作業完了して」→ get_current_context → 「完了します？」→ execute_confirmed_action(complete_job) → 完了後「報告書を生成しますか？」
-「報告書作って」→ get_active_job(projectId) → jobId取得 → generate_report(jobId) → 生成結果発話
+「報告書画面開いて」→ navigate_to(job_report, jobId=currentProjectId) → 画面移動のみ
+「報告書作って」→ get_active_job(projectId) → jobId取得 → generate_report(jobId) → スコア・生成確認発話
+「報告書の内容読んで」→ get_job_report → 最新報告書のスコア・概要を読み上げ
+★ Navigation（「開いて」）とAction/Data読み上げ（「して」「読んで」）を混同しない
 
-## 追加ツール
+## 追加ツール（Jobsフロー）
 - get_job_details: 案件詳細・作業状態・写真進捗を取得。projectId省略時は現在ページを使用。
 - run_quality_evaluation: AI品質評価を実行。jobIdが必要。get_active_jobで取得。
+- generate_report: AI品質報告書を生成。jobIdが必要。生成後スコアを読み上げる。
+- get_job_report: 最新報告書の内容を読み上げる。「報告書読んで」「内容教えて」に使う。navigate_toとは別。
 - get_expense_detail: 経費詳細確認。expenseId省略時は現在ページから自動取得。
 - create_expense_draft: 経費下書き作成。amount・categoryが必要。確認後に呼ぶ。結果にexpenseIdが含まれる。
 - edit_expense_draft: 下書き状態の経費を編集。expenseId必須。変更フィールドのみ指定。
-- generate_report: AI品質報告書を生成。jobIdが必要。
 
 ## 経費操作完全フロー（★必ずこの手順）
 「経費一覧教えて」→ get_expense_summary → 「N件あります。1番目:交通費¥500 下書き expenseId=UUID」
@@ -582,7 +589,10 @@ function buildHikaruRealtimeTools(
           })
           const data = await res.json()
           if (!data.success) return `品質評価に失敗しました: ${data.error?.message ?? 'エラー'}`
-          const s = data.summary
+          // API: { success: true, data: { results:[...], summary:{total,evaluated,passed,failed,averageScore,allPassed} } }
+          const s = data.data?.summary
+          console.log('[JARVIS-quality] summary:', JSON.stringify(s))
+          if (!s) return `品質評価を実行しましたが結果を取得できませんでした。`
           const allPassed = s?.allPassed
           return `AI品質評価が完了しました。平均スコア${s?.averageScore ?? '-'}点。合格${s?.passed ?? 0}/${s?.total ?? 0}箇所。${allPassed ? '全箇所合格です！報告書を生成しますか？' : '要改善箇所があります。再清掃が必要かもしれません。'}`
         } catch {
@@ -615,10 +625,70 @@ function buildHikaruRealtimeTools(
           })
           const data = await res.json()
           if (!res.ok) return `報告書の生成に失敗しました: ${data.error ?? 'エラー'}`
-          return data.success ? '報告書を生成しました。報告書ページで確認できます。' : `報告書の生成に失敗しました: ${data.error ?? 'エラー'}`
+          // API: { success: true, data: { reportId, content: { summary: { overall_score, ... } } } }
+          if (!data.success || !data.data?.reportId) {
+            return '報告書の生成結果を確認できませんでした。'
+          }
+          const rid     = data.data.reportId
+          const summary = data.data?.content?.summary
+          const score   = summary?.overall_score ?? '-'
+          const passed  = summary?.passed_count ?? '-'
+          const total   = summary?.total_spots ?? '-'
+          console.log('[JARVIS-report] generated reportId:', rid, 'score:', score)
+          return `報告書を生成しました（ver.${data.data.content?.version ?? 1}）。総合スコア${score}点、合格${passed}/${total}箇所。報告書ページで確認できます。`
         } catch {
           return '報告書の生成中にエラーが発生しました。'
         }
+      },
+    }),
+    toolFactory({
+      // 報告書内容取得 — 現在案件の最新報告書を取得して内容を読み上げる
+      // GET /api/ai/report?jobId=... → { success: true, data: [{ id, version, overall_score, created_at }] }
+      // GET /api/ai/report?reportId=... → { success: true, data: { content: { summary: {...} } } }
+    }),
+    toolFactory({
+      name:        'get_job_report',
+      description: '現在の案件の最新報告書の内容を取得して読み上げる。「報告書読んで」「内容教えて」等に使う。navigate_toとは別。',
+      parameters:  {
+        type:       'object',
+        properties: { projectId: { type: 'string', description: '案件ID（省略時は現在ページから自動取得）' } },
+        required:             [],
+        additionalProperties: false,
+      },
+      execute: async (input: any) => {
+        const pid = input?.projectId || projectIdRef.current
+        if (!pid) return '案件が特定できません。案件ページを開いてから試してください。'
+
+        // 今日の完了済みjobを探す（/api/jobs → projectsWithStatus[].todayJob）
+        const jobsData = await apiFetch('/api/jobs')
+        const projects: any[] = Array.isArray(jobsData?.data) ? jobsData.data : []
+        const project = projects.find((p: any) => p.id === pid)
+        const todayJob = project?.todayJob
+        const jobId = todayJob?.id
+        if (!jobId) return 'この案件の今日の作業記録が見つかりません。作業を開始してください。'
+
+        // GET /api/ai/report?jobId=xxx → 報告書一覧
+        const reportsData = await apiFetch(`/api/ai/report?jobId=${jobId}`)
+        if (!reportsData?.success) return '報告書を取得できませんでした。'
+        const reports: any[] = Array.isArray(reportsData.data) ? reportsData.data : []
+        if (reports.length === 0) return '報告書がまだ作成されていません。先に「報告書作って」で生成してください。'
+
+        const latest = reports[0]  // created_at desc で最新が先頭
+        // GET /api/ai/report?reportId=xxx → 詳細
+        const reportData = await apiFetch(`/api/ai/report?reportId=${latest.id}`)
+        if (!reportData?.success || !reportData.data?.content) return '報告書の内容を取得できませんでした。'
+
+        const content = reportData.data.content
+        const summary = content?.summary
+        const lines = [
+          `報告書 ver.${reportData.data.version}。`,
+          `総合スコア: ${summary?.overall_score ?? '-'}点。`,
+          `合格${summary?.passed_count ?? '-'}箇所、要確認${summary?.check_count ?? '-'}箇所、再清掃推奨${summary?.redo_count ?? '-'}箇所。`,
+          summary?.work_summary        ? `作業概要: ${summary.work_summary}。`       : '',
+          summary?.quality_assessment  ? `品質評価: ${summary.quality_assessment}。` : '',
+          summary?.total_comment       ? `総評: ${summary.total_comment}。`           : '',
+        ].filter(Boolean).join('')
+        return lines
       },
     }),
     toolFactory({
