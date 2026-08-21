@@ -35,7 +35,8 @@ home=ホーム, attendance=勤怠管理, schedule=スケジュール,
 shifts=シフト管理, expenses=経費申請, notifications=通知,
 profile=プロフィール画面(開くのみ), jobs=案件一覧, assistant=アシスタント,
 back=前の画面, job_detail=案件詳細, job_chat=AIチャット,
-job_manual=マニュアル, job_report=報告書
+job_manual=マニュアル, job_report=報告書,
+job_before=Before写真画面, job_after=After写真画面, job_evaluation=AI品質評価画面
 
 ★ 重要 — 以下は navigate_to を使わない:
 「プロフィール教えて」「名前は？」「電話番号は？」「メールは？」「権限は？」
@@ -64,7 +65,10 @@ job_manual=マニュアル, job_report=報告書
 - system.complete_job  作業完了（params: { projectId: "実ID" }）
 - system.submit_expense 経費申請（params: { expenseId: "実ID" }）
 - system.withdraw_expense 経費取り下げ（params: { expenseId: "実ID" }）申請中のみ
+- system.cancel_shift シフト取消（params: { shiftId: "実ID" }）scheduledのみ
+- system.withdraw_correction 勤怠修正申請取り下げ（params: { correctionId: "実ID" }）submittedのみ
 - system.mark_notification_read 通知既読（params: { notificationId: "実ID" }）
+- system.mark_all_notifications_read 一括既読（params: {}）
 
 ## 案件操作完全フロー
 「今日の案件教えて」→ get_today_jobs呼ぶ → 一覧を読み上げ
@@ -254,18 +258,21 @@ function buildHikaruRealtimeTools(
       },
     }),
     toolFactory({
+      // GET /api/attendance → { data: record } ← 単一オブジェクト（配列ではない）
       name:        'get_attendance',
       description: '今日の勤怠・打刻状況を確認する',
       parameters:  { type: 'object', properties: {}, required: [], additionalProperties: false },
       execute:     async () => {
         const data = await apiFetch('/api/attendance')
         if (!data) return '勤怠情報を取得できませんでした。'
-        const items = Array.isArray(data?.data) ? data.data : []
-        const today = items[0] as any
-        if (!today) return '本日の勤怠記録はありません。'
-        const ci = today.clock_in  ? new Date(today.clock_in).toLocaleTimeString('ja-JP',  { hour: '2-digit', minute: '2-digit' }) : '未'
-        const co = today.clock_out ? new Date(today.clock_out).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '未'
-        return `本日: 出勤${ci} / 退勤${co}。`
+        // GET /api/attendance → { data: single_record | null }（配列ではない）
+        const rec = data?.data ?? null
+        if (!rec) return '本日の勤怠記録はありません。出勤打刻をしてください。'
+        const fmt = (t: string | null) => t
+          ? new Date(t).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+          : '未打刻'
+        const breakStatus = rec.break_start && !rec.break_end ? ' (休憩中)' : ''
+        return `本日: 出勤${fmt(rec.clock_in)} / 退勤${fmt(rec.clock_out)}${breakStatus}。`
       },
     }),
     toolFactory({
@@ -404,7 +411,7 @@ function buildHikaruRealtimeTools(
         properties: {
           destination: {
             type: 'string',
-            enum: ['home', 'attendance', 'schedule', 'shifts', 'expenses', 'expenses_new', 'notifications', 'profile', 'jobs', 'assistant', 'back', 'job_detail', 'job_chat', 'job_manual', 'job_report', 'corrections'],
+            enum: ['home', 'attendance', 'schedule', 'shifts', 'expenses', 'expenses_new', 'notifications', 'profile', 'jobs', 'assistant', 'back', 'job_detail', 'job_chat', 'job_manual', 'job_report', 'corrections', 'job_before', 'job_after', 'job_evaluation'],
           },
           jobId: { type: 'string' },
         },
@@ -434,6 +441,7 @@ function buildHikaruRealtimeTools(
         }
         const subPages: Record<string, string> = {
           job_detail: '', job_chat: '/chat', job_manual: '/manual', job_report: '/report',
+          job_before: '/before', job_after: '/after', job_evaluation: '/evaluation',
         }
         if (destination in subPages) {
           const id = jobId || projectIdRef.current
@@ -444,7 +452,11 @@ function buildHikaruRealtimeTools(
           console.log('[JARVIS-nav] router_push_called')
           const label = destination === 'job_detail' ? '案件詳細'
             : destination === 'job_chat' ? 'AIアシスタント'
-            : destination === 'job_manual' ? 'マニュアル' : '報告書'
+            : destination === 'job_manual' ? 'マニュアル'
+            : destination === 'job_report' ? '報告書'
+            : destination === 'job_before' ? 'Before写真画面'
+            : destination === 'job_after' ? 'After写真画面'
+            : 'AI品質評価画面'
           return `${label}を開きました。`
         }
         const route = NAV[destination]
@@ -474,7 +486,10 @@ function buildHikaruRealtimeTools(
               'system.break_start', 'system.break_end',
               'system.start_job', 'system.complete_job',
               'system.submit_expense', 'system.withdraw_expense',
+              'system.cancel_shift',
+              'system.withdraw_correction',
               'system.mark_notification_read',
+              'system.mark_all_notifications_read',
             ],
           },
           params: {
@@ -483,6 +498,8 @@ function buildHikaruRealtimeTools(
               projectId:      { type: 'string' },
               jobId:          { type: 'string' },
               expenseId:      { type: 'string' },
+              shiftId:        { type: 'string' },
+              correctionId:   { type: 'string' },
               notificationId: { type: 'string' },
             },
             required:             [],
