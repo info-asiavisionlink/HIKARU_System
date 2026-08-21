@@ -100,6 +100,16 @@ IDを推測・捏造しない。必ずツールで取得した実IDを使う。
 「休憩終わって」→execute_confirmed_action(break_end)→発話
 「退勤して」→execute_confirmed_action(clock_out)→発話
 
+## 通知フロー（★必ずこの手順）
+「未読通知何件？」→ get_notifications → 「未読N件あります」と発話
+「通知教えて」→ get_notifications → 「N件（未読M件）あります。1件目:シフト更新 notificationId=UUID」
+「1件目の詳細」→ get_notificationsで取得済みデータから読み上げ（再API呼び出し不要）
+「この通知を既読にして」→「既読にします？」→ execute_confirmed_action(mark_notification_read,{notificationId:"実UUID"})
+「全部既読にして」→「未読N件を全て既読にします？」→ execute_confirmed_action(mark_all_notifications_read,{})
+- ★ notificationIdはget_notificationsで取得した実IDのみ使用。推測・捏造禁止
+- ★ 「1件目」等はget_notifications取得済みデータから解決（AIがIDを生成しない）
+- ★ 個別通知GET APIは存在しない。詳細は一覧取得済みデータを使う
+
 ## シフト操作フロー（★必ずこの手順）
 「今日のシフト教えて」→ get_shift_list(date_from=今日YYYY-MM-DD, date_to=今日) → 一覧発話(shiftId含む)
 「今週のシフト」→ get_shift_list(date_from=今週月曜, date_to=今週日曜) → 一覧発話
@@ -178,17 +188,52 @@ function buildHikaruRealtimeTools(
       },
     }),
     toolFactory({
+      // GET /api/notifications → { notifications: [...], unread_count: N }
+      // 個別GET APIは存在しない。詳細は一覧取得済みデータを使う。
       name:        'get_notifications',
-      description: '通知・未読件数とIDを確認する',
+      description: '通知一覧・未読件数を取得する。notificationIdを含むので「1件目」等の既読化に使える。既読化にはmark_notification_readを使う。',
       parameters:  { type: 'object', properties: {}, required: [], additionalProperties: false },
       execute:     async () => {
         const data = await apiFetch('/api/notifications')
         if (!data) return '通知を取得できませんでした。'
-        const list = Array.isArray(data?.data) ? data.data : []
-        const unread = list.filter((n: any) => !n.is_read)
-        if (unread.length === 0) return '未読の通知はありません。'
-        const items = unread.slice(0, 3).map((n: any, i: number) => `${i + 1}: ${n.title ?? '通知'} [id:${n.id}]`).join(', ')
-        return `未読${unread.length}件。${items}`
+        // GET /api/notifications → { notifications: [...], unread_count: N }
+        const list: any[]      = Array.isArray(data?.notifications) ? data.notifications : []
+        const unreadCount: number = data?.unread_count ?? list.filter((n: any) => !n.is_read).length
+        if (list.length === 0) return '通知はありません。'
+
+        const TYPE_LABEL: Record<string, string> = {
+          expense_approved:              '経費承認',
+          expense_rejected:              '経費却下',
+          shift_created:                 'シフト作成',
+          shift_updated:                 'シフト更新',
+          shift_cancelled:               'シフト取消',
+          shift_confirmed:               'シフト確定',
+          project_assigned:              '案件割り当て',
+          project_unassigned:            '案件解除',
+          project_cancelled:             '案件取消',
+          project_paused:                '案件休止',
+          project_completed:             '案件完了',
+          project_details_changed:       '案件詳細変更',
+          attendance_correction_approved:'勤怠修正承認',
+          attendance_correction_rejected:'勤怠修正却下',
+        }
+        const fmtDate = (iso: string): string => {
+          const d         = new Date(iso)
+          const today     = new Date()
+          const yesterday = new Date(today)
+          yesterday.setDate(today.getDate() - 1)
+          const time = d.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+          if (d.toDateString() === today.toDateString())     return `今日 ${time}`
+          if (d.toDateString() === yesterday.toDateString()) return `昨日 ${time}`
+          return d.toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' }) + ' ' + time
+        }
+        const items = list.slice(0, 5).map((n: any, i: number) => {
+          const status  = n.is_read ? '既読' : '未読'
+          const type    = TYPE_LABEL[n.type] ?? n.type
+          const bodyStr = n.body ? `「${n.body.slice(0, 30)}」` : ''
+          return `${i + 1}件目: ${fmtDate(n.created_at)} [${type}] ${n.title}${bodyStr} ${status} notificationId=${n.id}`
+        }).join(' / ')
+        return `通知${list.length}件（未読${unreadCount}件）。${items}`
       },
     }),
     toolFactory({
@@ -1097,11 +1142,11 @@ async function fetchL1Result(action: SystemActionName, projectId?: string): Prom
         return { text, data: { type: 'job_list', items } }
       }
       case 'system.get_notifications': {
+        // GET /api/notifications → { notifications: [...], unread_count: N }
         const res = await fetch('/api/notifications', { credentials: 'include' })
         if (!res.ok) return none('通知を取得できませんでした。')
-        const data = await res.json()
-        const list   = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : [])
-        const unread = list.filter((n: { is_read?: boolean }) => !n.is_read).length
+        const data  = await res.json()
+        const unread: number = data?.unread_count ?? 0
         return none(unread === 0 ? '未読の通知はありません。' : `未読の通知が${unread}件あります。読み上げますか？`)
       }
       case 'system.get_schedule': {

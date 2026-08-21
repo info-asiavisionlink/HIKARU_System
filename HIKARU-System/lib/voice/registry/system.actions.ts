@@ -147,6 +147,10 @@ export const SYSTEM_ACTIONS = {
     level: 3 as const,
     description: '通知を既読にする',
   },
+  'system.mark_all_notifications_read': {
+    level: 3 as const,
+    description: '全未読通知を一括既読にする',
+  },
   'system.withdraw_correction': {
     level: 3 as const,
     description: '申請中の勤怠修正申請を取り下げる（submitted→withdrawn）',

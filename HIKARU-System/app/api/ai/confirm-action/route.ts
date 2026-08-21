@@ -531,6 +531,7 @@ export async function POST(req: NextRequest) {
       }
 
       // ─── L3: mark_notification_read ───────────────────────
+      // PATCH /api/notifications/[id]/read → { ok: true } or { ok: true, already_read: true }
       case 'system.mark_notification_read': {
         const { notificationId } = params
         if (!notificationId) return Response.json({ error: 'notificationId required' }, { status: 400 })
@@ -538,14 +539,47 @@ export async function POST(req: NextRequest) {
           method:  'PATCH',
           headers: { Cookie: req.headers.get('cookie') ?? '' },
         })
+        const data = await res.json()
         logVoiceAudit({
           source: 'jarvis_voice', actor: uid, actorType: 'worker',
           companyId: profile.company_id, action, safetyLevel: level,
           confirmed: true, result: res.ok ? 'success' : 'failed',
           resourceType: 'notification', resourceId: notificationId,
         })
-        if (!res.ok) return Response.json({ error: '既読処理に失敗しました。' }, { status: res.status })
-        return Response.json({ success: true, voiceReply: '既読にしました。' })
+        if (!res.ok) return Response.json({ error: data?.error ?? '既読処理に失敗しました。' }, { status: res.status })
+        // already_readはAPIが二重既読を検知した場合。どちらも成功。
+        if (data?.already_read) {
+          return Response.json({ success: true, voiceReply: 'この通知はすでに既読です。' })
+        }
+        return Response.json({ success: true, voiceReply: '通知を既読にしました。' })
+      }
+
+      // ─── L3: mark_all_notifications_read ──────────────────
+      // PATCH /api/notifications/read-all → { ok: true }
+      // Read-back: GET /api/notifications でunread_count=0確認
+      case 'system.mark_all_notifications_read': {
+        const res = await fetch(`${req.nextUrl.origin}/api/notifications/read-all`, {
+          method:  'PATCH',
+          headers: { Cookie: req.headers.get('cookie') ?? '' },
+        })
+        const data = await res.json()
+        logVoiceAudit({
+          source: 'jarvis_voice', actor: uid, actorType: 'worker',
+          companyId: profile.company_id, action, safetyLevel: level,
+          confirmed: true, result: res.ok ? 'success' : 'failed',
+          resourceType: 'notification',
+        })
+        if (!res.ok) return Response.json({ error: data?.error ?? '一括既読処理に失敗しました。' }, { status: res.status })
+        // Read-back: GET /api/notifications でunread_count=0確認
+        const rbRes  = await fetch(`${req.nextUrl.origin}/api/notifications`, {
+          headers: { Cookie: req.headers.get('cookie') ?? '' },
+        })
+        const rbData      = await rbRes.json()
+        const unreadCount: number = rbData?.unread_count ?? -1
+        if (unreadCount !== 0) {
+          return Response.json({ error: '一括既読処理を確認できませんでした。' }, { status: 500 })
+        }
+        return Response.json({ success: true, voiceReply: `全ての通知を既読にしました。` })
       }
 
       default:
