@@ -3,6 +3,7 @@
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { Camera, Upload, X, ChevronLeft, Check, Loader2, Receipt } from 'lucide-react'
+import { getJSTDateString } from '@/lib/date'
 
 const GOLD = 'oklch(0.73 0.12 78)'
 
@@ -27,7 +28,7 @@ export default function NewExpensePage() {
   const [myProjects, setMyProjects] = React.useState<any[]>([])
 
   const [form, setForm] = React.useState({
-    expense_date: new Date().toISOString().split('T')[0],
+    expense_date: getJSTDateString(),
     category:     'transport',
     amount:       '',
     description:  '',
@@ -43,7 +44,7 @@ export default function NewExpensePage() {
     const today = new Date()
     const from  = new Date(today); from.setDate(from.getDate() - 7)
     const to    = new Date(today); to.setDate(to.getDate() + 7)
-    const fmt   = (d: Date) => d.toISOString().split('T')[0]
+    const fmt   = (d: Date) => getJSTDateString(d)
 
     fetch(`/api/shifts?date_from=${fmt(from)}&date_to=${fmt(to)}`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : { shifts: [] })

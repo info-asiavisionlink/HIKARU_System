@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
+import { getJSTDateString } from '@/lib/date'
 
 // GET /api/jobs/[jobId]
 // 案件詳細・photo_spots・今日のjob・写真をサーバー側で安全に取得。
@@ -65,7 +66,7 @@ export async function GET(
       .order('order_num', { ascending: true })
 
     // 6. 今日の job 取得（worker_id = uid で所有権確認）
-    const today = new Date().toISOString().split('T')[0]
+    const today = getJSTDateString()
     const { data: todayJob } = await admin
       .from('jobs')
       .select('id, status, started_at, completed_at')

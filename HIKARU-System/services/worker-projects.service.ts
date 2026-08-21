@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/client'
+import { getJSTDateString } from '@/lib/date'
 
 export interface WorkerProject {
   id: string
@@ -55,7 +56,7 @@ export async function getWorkerProjects(opts?: {
   if (error) console.error('[getWorkerProjects] projects error:', error.message, error.code)
   if (!data) return { data: [], count: 0 }
 
-  const today = new Date().toISOString().split('T')[0]
+  const today = getJSTDateString()
   const projectIds = data.map((p) => p.id)
 
   let todayJobs: any[] = []
@@ -94,7 +95,7 @@ export async function getWorkerProject(projectId: string, workerId?: string): Pr
   if (error) console.error('[getWorkerProject] error:', error.message)
   if (!project) return null
 
-  const today = new Date().toISOString().split('T')[0]
+  const today = getJSTDateString()
   const { data: job } = await supabase
     .from('jobs')
     .select('id, status, started_at, completed_at')
@@ -111,7 +112,7 @@ export async function getWorkerTodaySummary(workerId?: string) {
   const wid = await resolveWorkerId(workerId)
   if (!wid) return { inProgress: 0, completed: 0, total: 0, jobs: [] as any[] }
 
-  const today = new Date().toISOString().split('T')[0]
+  const today = getJSTDateString()
   const { data: jobs, error } = await supabase
     .from('jobs')
     .select('id, project_id, status, started_at, completed_at, projects(name, location_name)')

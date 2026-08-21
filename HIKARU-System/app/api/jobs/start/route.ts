@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { getJSTDateString } from '@/lib/date'
 
 // POST /api/jobs/start
 // ブラウザSupabase auth.getUser() ハングを回避するサーバー版 getOrCreateTodayJob
@@ -39,7 +40,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'not found' }, { status: 404 })
     }
 
-    const today = new Date().toISOString().split('T')[0]
+    const today = getJSTDateString()
 
     // 二重作成防止: 同日の既存ジョブを確認
     const { data: existing } = await supabase

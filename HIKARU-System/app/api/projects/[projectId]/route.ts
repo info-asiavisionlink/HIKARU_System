@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { getJSTDateString } from '@/lib/date'
 
 // GET /api/projects/[projectId]
 // 案件詳細の初期表示データをサーバーサイドで取得
@@ -19,7 +20,7 @@ export async function GET(
 
   try {
     const supabase = await createClient()
-    const today = new Date().toISOString().split('T')[0]
+    const today = getJSTDateString()
 
     // ownership: プロフィールから entity_type / entity_id を取得
     const { data: profile } = await supabase

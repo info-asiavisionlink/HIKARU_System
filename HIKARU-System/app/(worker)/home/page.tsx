@@ -7,6 +7,7 @@ import {
   Briefcase, CheckCircle2, Clock, ChevronRight,
   Bell, PlayCircle, Activity,
 } from 'lucide-react'
+import { getJSTDateString } from '@/lib/date'
 
 /* Gold mini stat card */
 function StatCard({ label, value, icon: Icon, href }: {
@@ -154,7 +155,7 @@ export default function HomePage() {
         setRecentProjects(data.projects)
 
         // 今日のシフト取得
-        const today = new Date().toISOString().split('T')[0]
+        const today = getJSTDateString()
         fetch(`/api/shifts?date_from=${today}&date_to=${today}`, { credentials: 'include' })
           .then(r => r.ok ? r.json() : { shifts: [] })
           .then(d => setTodayShifts(d.shifts ?? []))

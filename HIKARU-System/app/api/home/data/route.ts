@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { getJSTDateString } from '@/lib/date'
 
 // ホームページ全データをサーバーサイドで取得
 // ブラウザ側の createBrowserClient シングルトン問題を完全回避
@@ -13,7 +14,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const supabase = await createClient()
-    const today = new Date().toISOString().split('T')[0]
+    const today = getJSTDateString()
 
     // プロフィール取得（entity_type / entity_id を含む）
     const [profileRes, jobsRes] = await Promise.all([

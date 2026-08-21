@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { getJSTDateString } from '@/lib/date'
 
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
@@ -36,7 +37,7 @@ export async function GET(req: NextRequest) {
   }
 
   // today
-  const today = new Date().toISOString().split('T')[0]
+  const today = getJSTDateString()
   const { data, error } = await sb
     .from('attendance_records')
     .select('*')

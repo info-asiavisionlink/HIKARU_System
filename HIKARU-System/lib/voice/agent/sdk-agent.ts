@@ -7,6 +7,7 @@
 import { Agent, tool, setTracingDisabled } from '@openai/agents'
 import { z } from 'zod'
 import { isValidAction, getActionLevel } from '@/lib/voice/registry/system.actions'
+import { getJSTDateString } from '@/lib/date'
 
 const CONFIRMATION_EXPIRY_MS = 5 * 60 * 1000
 
@@ -243,7 +244,7 @@ const getActiveJobTool = tool({
     const pid = projectId || ctx.projectId
     try {
       // 今日のin_progress jobを検索
-      const today = new Date().toISOString().split('T')[0]
+      const today = getJSTDateString()
       const path  = pid
         ? `/api/jobs?projectId=${pid}&status=in_progress&date=${today}`
         : `/api/jobs?status=in_progress&date=${today}`

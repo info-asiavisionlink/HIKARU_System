@@ -15,6 +15,7 @@ import type {
   VoiceMode, ConversationContext, LastResultData, VoiceSettings, PendingConfirmation,
 } from '@/lib/voice/state/types'
 import type { SystemActionName } from '@/lib/voice/registry/system.actions'
+import { getJSTDateString } from '@/lib/date'
 
 // ─── Realtime 定数 ────────────────────────────────────────────
 // gpt-realtime-2.1 = @openai/agents-realtime v0.17 のデフォルトモデル。
@@ -364,7 +365,7 @@ function buildHikaruRealtimeTools(
       execute: async (input: any) => {
         const { projectId } = input ?? {}
         const pid   = projectId || projectIdRef.current
-        const today = new Date().toISOString().split('T')[0]
+        const today = getJSTDateString()
         const path  = pid ? `/api/jobs?projectId=${pid}&status=in_progress&date=${today}` : `/api/jobs?status=in_progress&date=${today}`
         const data  = await apiFetch(path)
         const jobs  = Array.isArray(data?.data) ? data.data : []
@@ -720,7 +721,7 @@ function buildHikaruRealtimeTools(
             headers:     { 'Content-Type': 'application/json' },
             credentials: 'include',
             body:        JSON.stringify({
-              expense_date: expense_date || new Date().toISOString().split('T')[0],
+              expense_date: expense_date || getJSTDateString(),
               category,
               amount:       numAmount,
               description:  description || null,
@@ -810,7 +811,7 @@ function buildHikaruRealtimeTools(
         additionalProperties: false,
       },
       execute: async (input: any) => {
-        const today   = new Date().toISOString().split('T')[0]
+        const today   = getJSTDateString()
         const from    = (input?.date_from ?? today).trim()
         const to      = (input?.date_to   ?? from).trim()
         const data    = await apiFetch(`/api/shifts?date_from=${from}&date_to=${to}`)
@@ -1023,7 +1024,7 @@ function buildHikaruRealtimeTools(
         additionalProperties: false,
       },
       execute: async (input: any) => {
-        const today      = new Date().toISOString().split('T')[0]
+        const today      = getJSTDateString()
         const targetDate = (input?.date ?? today).trim() as string
         const fmtT = (t: string | null) => t
           ? new Date(t).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
@@ -1287,7 +1288,7 @@ async function fetchL1Result(action: SystemActionName, projectId?: string): Prom
       }
       case 'system.get_shifts': {
         // GET /api/shifts → { shifts: [...] } が正しいResponse Contract
-        const today = new Date().toISOString().split('T')[0]
+        const today = getJSTDateString()
         const res = await fetch(`/api/shifts?date_from=${today}`, { credentials: 'include' })
         if (!res.ok) return none('シフトを取得できませんでした。')
         const data = await res.json()

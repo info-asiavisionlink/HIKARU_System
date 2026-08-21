@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import { Plus, X, Loader2, CalendarCheck, MapPin, Clock, Pencil, Ban } from 'lucide-react'
+import { getJSTDateString } from '@/lib/date'
 
 const GOLD   = 'oklch(0.73 0.12 78)'
 const CYAN   = 'oklch(0.85 0.18 198)'
@@ -53,7 +54,7 @@ function ShiftForm({ projects, editShift, defaultDate, onClose, onSuccess }: Shi
   const isEdit   = !!editShift
   const [projectId,  setProjectId]  = React.useState(editShift?.projects?.id ?? '')
   const [shiftDate,  setShiftDate]  = React.useState(
-    editShift?.shift_date ?? defaultDate ?? new Date().toISOString().split('T')[0]
+    editShift?.shift_date ?? defaultDate ?? getJSTDateString()
   )
   const [startTime,  setStartTime]  = React.useState(editShift?.start_time?.slice(0,5) ?? '09:00')
   const [endTime,    setEndTime]    = React.useState(editShift?.end_time?.slice(0,5)   ?? '18:00')
@@ -303,7 +304,7 @@ export default function ShiftsPage() {
       const now   = new Date()
       const from  = new Date(now.getFullYear(), now.getMonth() - 1, 1)
       const to    = new Date(now.getFullYear(), now.getMonth() + 2, 0)
-      const fmt   = (d: Date) => d.toISOString().split('T')[0]
+      const fmt   = (d: Date) => getJSTDateString(d)
       const res   = await fetch(`/api/shifts?date_from=${fmt(from)}&date_to=${fmt(to)}`, { credentials: 'include' })
       if (res.ok) {
         const { shifts: data } = await res.json()
@@ -351,7 +352,7 @@ export default function ShiftsPage() {
   async function handleSuccess()  { closeForm(); await fetchShifts() }
 
   // 今月以降のシフト / 過去のシフト に分類
-  const todayStr   = new Date().toISOString().split('T')[0]
+  const todayStr   = getJSTDateString()
   const upcoming   = shifts.filter(s => s.shift_date >= todayStr && s.status !== 'cancelled')
   const past       = shifts.filter(s => s.shift_date < todayStr  && s.status !== 'cancelled')
   const cancelled  = shifts.filter(s => s.status === 'cancelled')

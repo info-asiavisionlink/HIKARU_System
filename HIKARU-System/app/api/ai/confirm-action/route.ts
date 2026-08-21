@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { isValidAction, getActionLevel } from '@/lib/voice/registry/system.actions'
 import { logVoiceAudit }  from '@/lib/voice/agent/audit'
+import { getJSTDateString } from '@/lib/date'
 
 // ============================================================
 // POST /api/ai/confirm-action — System JARVIS Confirmed Action
@@ -105,7 +106,7 @@ export async function POST(req: NextRequest) {
         }
 
         // 既存job確認（二重作成防止）
-        const today = new Date().toISOString().split('T')[0]
+        const today = getJSTDateString()
         const { data: existing } = await supabase
           .from('jobs')
           .select('id, status')
@@ -167,7 +168,7 @@ export async function POST(req: NextRequest) {
         // jobId が直接渡された場合 / projectId から今日の in_progress job を探す
         let resolvedJobId = jobId
         if (!resolvedJobId && projectId) {
-          const today = new Date().toISOString().split('T')[0]
+          const today = getJSTDateString()
           const { data: found } = await adminClient
             .from('jobs')
             .select('id, status')

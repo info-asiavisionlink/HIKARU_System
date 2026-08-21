@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/client'
+import { getJSTDateString } from '@/lib/date'
 
 export interface JobRow {
   id: string
@@ -26,7 +27,7 @@ export async function getOrCreateTodayJob(projectId: string): Promise<JobRow | n
 
   if (!profile?.company_id) return null
 
-  const today = new Date().toISOString().split('T')[0]
+  const today = getJSTDateString()
 
   // Existing job for today
   const { data: existing } = await supabase
@@ -66,7 +67,7 @@ export async function getTodayJob(projectId: string): Promise<JobRow | null> {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
 
-  const today = new Date().toISOString().split('T')[0]
+  const today = getJSTDateString()
   const { data } = await supabase
     .from('jobs')
     .select('*')
