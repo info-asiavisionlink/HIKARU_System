@@ -646,8 +646,6 @@ function buildHikaruRealtimeTools(
       // 報告書内容取得 — 現在案件の最新報告書を取得して内容を読み上げる
       // GET /api/ai/report?jobId=... → { success: true, data: [{ id, version, overall_score, created_at }] }
       // GET /api/ai/report?reportId=... → { success: true, data: { content: { summary: {...} } } }
-    }),
-    toolFactory({
       name:        'get_job_report',
       description: '現在の案件の最新報告書の内容を取得して読み上げる。「報告書読んで」「内容教えて」等に使う。navigate_toとは別。',
       parameters:  {
