@@ -26,16 +26,21 @@ const RT_SYSTEM_PROMPT = `あなたはHIKARU Workerアシスタント「JARVIS�
 回答は2〜3文以内で音声向けに簡潔に。
 
 ## Navigation操作（Read-only・安全）
-「〇〇を開いて」「〇〇に移動して」「〇〇見せて」等のリクエストは navigate_to ツールを使う。
+「〇〇を開いて」「〇〇に移動して」等のリクエストは navigate_to ツールを使う。
 destinationは必ず下記のEnum値を選ぶ（自由なURLは絶対禁止）。
 移動後は「〇〇を開きました」と簡潔に発話する。
 
 destination値:
 home=ホーム, attendance=勤怠管理, schedule=スケジュール,
 shifts=シフト管理, expenses=経費申請, notifications=通知,
-profile=プロフィール, jobs=案件一覧, assistant=アシスタント,
+profile=プロフィール画面(開くのみ), jobs=案件一覧, assistant=アシスタント,
 back=前の画面, job_detail=案件詳細, job_chat=AIチャット,
 job_manual=マニュアル, job_report=報告書
+
+★ 重要 — 以下は navigate_to を使わない:
+「プロフィール教えて」「名前は？」「電話番号は？」「メールは？」「権限は？」
+→ これらは画面移動ではなくデータ取得。get_profile ツールを呼ぶ。
+→ navigate_to('profile') は「プロフィール画面開いて」等の画面遷移専用。
 
 ## Write操作（最重要ルール）
 ★ ツールを呼ぶ前に言葉で「完了しました」「やりました」「打刻しました」等を言うことは絶対禁止。
@@ -100,11 +105,16 @@ IDを推測・捏造しない。必ずツールで取得した実IDを使う。
 「休憩終わって」→execute_confirmed_action(break_end)→発話
 「退勤して」→execute_confirmed_action(clock_out)→発話
 
-## プロフィールフロー
-「プロフィール教えて」→ get_profile → 氏名・メール・電話・権限を読み上げ
-「電話番号教えて」「名前は？」等 → get_profile → 該当項目のみ回答
-「プロフィール変更したい」→「現在プロフィールの変更はWorkerアプリから直接行えません。管理者にご連絡ください。」
-- ★ プロフィールはRead-only。更新API・編集UIが存在しないため変更不可
+## プロフィールフロー（★「教えて」「は？」系は必ず get_profile を呼ぶ。navigate_toは使わない）
+以下はすべて navigate_to ではなく get_profile ツールを呼んでデータを取得し、Tool Resultを音声で読み上げる:
+「プロフィール教えて」→ get_profile → 「お名前は○○です。メールは...電話は...権限は...」と読み上げ
+「名前は？」「名前教えて」→ get_profile → nameを回答
+「電話番号は？」「電話番号教えて」→ get_profile → phoneを回答
+「メールアドレスは？」「メール教えて」→ get_profile → emailを回答
+「権限は？」「役割は？」→ get_profile → roleを回答
+「プロフィール画面開いて」「プロフィールを開いて」→ navigate_to('profile') で画面遷移のみ
+「プロフィール変更したい」→「プロフィールの変更はアプリから行えません。管理者にご連絡ください。」
+- ★ プロフィールはRead-only。更新APIなし
 - ★ role・company・permission・emailをVoiceで変更しない
 
 ## 通知フロー（★必ずこの手順）
@@ -358,6 +368,31 @@ function buildHikaruRealtimeTools(
         if (!data) return 'スケジュールを取得できませんでした。'
         const items = Array.isArray(data?.data) ? data.data : []
         return items.length === 0 ? '今後の予定はありません。' : `スケジュールに${items.length}件の予定があります。`
+      },
+    }),
+    toolFactory({
+      // GET /api/profile → { profile: { id, name, email, phone, role } }
+      // ★ 「プロフィール教えて」「名前は？」等はこのToolを呼ぶ（navigate_toではない）
+      // ★ プロフィールはRead-only。更新API・編集UIが存在しないため変更不可。
+      name:        'get_profile',
+      description: '★自分のプロフィール情報（氏名・メール・電話番号・権限）を取得して読み上げる。「プロフィール教えて」「名前は？」「電話は？」「メールは？」「権限は？」に使う。navigate_toとは別。',
+      parameters:  { type: 'object', properties: {}, required: [], additionalProperties: false },
+      execute:     async () => {
+        console.log('[JARVIS-profile] get_profile called')
+        const res = await fetch('/api/profile', { credentials: 'include' })
+        console.log('[JARVIS-profile] /api/profile status:', res.status, 'ok:', res.ok)
+        if (!res.ok) return 'プロフィール情報を取得できませんでした。'
+        const data = await res.json()
+        // GET /api/profile → { profile: { id, name, email, phone, role } }
+        const profile = data?.profile
+        console.log('[JARVIS-profile] hasName:', !!profile?.name, 'hasEmail:', !!profile?.email, 'hasPhone:', !!profile?.phone, 'hasRole:', !!profile?.role)
+        if (!profile) return 'プロフィールが見つかりませんでした。'
+        const ROLE: Record<string, string> = {
+          admin: '管理者', worker: '作業者', client: 'オーナー',
+        }
+        const role  = ROLE[profile.role] ?? profile.role ?? '不明'
+        const phone = profile.phone ? profile.phone : '未登録'
+        return `お名前: ${profile.name}。メール: ${profile.email}。電話番号: ${phone}。権限: ${role}。プロフィールの変更はアプリ上では行えません。管理者にご連絡ください。`
       },
     }),
     toolFactory({
@@ -669,29 +704,6 @@ function buildHikaruRealtimeTools(
           transport: '交通費', parking: '駐車場代', supplies: '備品', consumables: '消耗品', other: 'その他',
         }
         return `経費を更新しました。${LABELS[updated.category] ?? updated.category} ¥${updated.amount}。${updated.expense_date}。expenseId=${eid}`
-      },
-    }),
-
-    // ─── プロフィールツール ───────────────────────────────────
-
-    toolFactory({
-      // GET /api/profile → { profile: { id, name, email, phone, role } }
-      // プロフィールはRead-only。更新API・編集UIが存在しないため変更不可。
-      name:        'get_profile',
-      description: '自分のプロフィール情報（氏名・メール・電話・権限）を取得する。プロフィールは読み取り専用。',
-      parameters:  { type: 'object', properties: {}, required: [], additionalProperties: false },
-      execute:     async () => {
-        const data = await apiFetch('/api/profile')
-        if (!data) return 'プロフィール情報を取得できませんでした。'
-        // GET /api/profile → { profile: { id, name, email, phone, role } }
-        const profile = data?.profile
-        if (!profile) return 'プロフィールが見つかりませんでした。'
-        const ROLE: Record<string, string> = {
-          admin: '管理者', worker: '作業者', client: 'オーナー',
-        }
-        const role  = ROLE[profile.role] ?? profile.role ?? '不明'
-        const phone = profile.phone ? profile.phone : '未登録'
-        return `お名前: ${profile.name}。メール: ${profile.email}。電話番号: ${phone}。権限: ${role}。プロフィールの変更はアプリ上では行えません。管理者にご連絡ください。`
       },
     }),
 
@@ -1223,9 +1235,13 @@ async function fetchL1Result(action: SystemActionName, projectId?: string): Prom
         // GET /api/profile → { profile: { id, name, email, phone, role } }
         const res = await fetch('/api/profile', { credentials: 'include' })
         if (!res.ok) return none('プロフィールを取得できませんでした。')
-        const data = await res.json()
-        const name = data?.profile?.name
-        return none(name ? `${name}さんのプロフィールです。` : 'プロフィール画面を確認してください。')
+        const data   = await res.json()
+        const p      = data?.profile
+        if (!p) return none('プロフィール情報が見つかりませんでした。')
+        const ROLE: Record<string, string> = { admin: '管理者', worker: '作業者', client: 'オーナー' }
+        const role  = ROLE[p.role] ?? p.role ?? '不明'
+        const phone = p.phone ? p.phone : '未登録'
+        return none(`${p.name}さんのプロフィールです。メール: ${p.email}。電話番号: ${phone}。権限: ${role}。`)
       }
       case 'system.get_job_detail': {
         if (!projectId) return none('案件の画面を開いてから確認してください。')
