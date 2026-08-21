@@ -2021,15 +2021,32 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error('[realtime-connect] failed:', msg)
-      // SpeechRecognition自動起動を削除。Mic競合・点滅の根本原因。
-      // 接続失敗時はidleに戻す。ユーザーが手動でJARVISを再起動できる。
       realtimeSessionRef.current = null
       micTrackRef.current = null
       setVoiceEngineMode('off')
       voiceEngineModeRef.current = 'off'
-      setModeSync('idle')
+      // Engine OFF時はSession状態もリセット（UI整合性: 「会話中」+「VOICE ENGINE OFF」矛盾を防ぐ）
+      isSessionRef.current = false
+      setIsSession(false)
+      setIsStandby(false)
+      // ユーザーへのエラー表示（原因を特定できるよう詳細を含める）
+      const uiMsg = (msg.includes('not-allowed') || msg.includes('NotAllowedError'))
+        ? 'マイクへのアクセスを許可してください。ブラウザの設定を確認してください。'
+        : msg.includes('token_failed:401')
+        ? '認証エラー。ログアウトして再ログインしてください。'
+        : msg.includes('no_token') || msg.includes('token_failed')
+        ? `Voice接続の準備に失敗しました。(${msg.slice(0, 80)})`
+        : msg.includes('ephemeral client key')
+        ? 'Voice接続の認証に失敗しました。ページを更新してください。'
+        : `Voice Engine接続エラー: ${msg.slice(0, 100)}`
+      setErrorMessage(uiMsg)
+      setModeSync('error')
+      setTimeout(() => {
+        if (modeRef.current === 'error') { setModeSync('idle'); setErrorMessage('') }
+      }, 6000)
     }
-  }, [router, addMessage, setModeSync, muteMic, clearResumeTimer, setResponse])
+  }, [router, addMessage, setModeSync, muteMic, clearResumeTimer, setResponse,
+      setIsSession, setIsStandby, setErrorMessage])
 
   React.useEffect(() => { connectRealtimeRef.current = connectRealtime }, [connectRealtime])
 
