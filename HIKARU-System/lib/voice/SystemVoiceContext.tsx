@@ -1416,10 +1416,44 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
   const resumeTimerRef   = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const streamingTranscriptRef = React.useRef('')
 
+  // ─── Startup speed: Preload refs ──────────────────────────────
+  // モジュールPromiseをキャッシュ。同一Promiseを複数回awaitしても安全（resolved後は即解決）。
+  const realtimeModulePromiseRef = React.useRef<Promise<any> | null>(null)
+  // clientSecretを短期メモリキャッシュ。localStorage/sessionStorage/DB禁止。
+  // TTL = 60秒（API有効期限600秒の1/10。安全マージンを十分に確保）。
+  const PREFETCH_TTL_MS = 60_000
+  type PrefetchedToken = { clientSecret: string; fetchedAt: number }
+  const prefetchedTokenRef = React.useRef<PrefetchedToken | null>(null)
+
   React.useEffect(() => { voiceEngineModeRef.current = voiceEngineMode }, [voiceEngineMode])
 
   // localStorage から設定をロード（クライアントサイドのみ）
   React.useEffect(() => { setVoiceSettingsSt(loadVoiceSettings()) }, [])
+
+  // ─── Startup speed: Provider mount後にSDKとTokenをバックグラウンドpreload ──
+  // WebRTC接続・RealtimeSession生成・AI課金は一切しない。
+  // SDKモジュールのダウンロードとclientSecret取得のみ。
+  React.useEffect(() => {
+    // SDK preload: importのみ。RealtimeSession/Agent/WebRTCは作らない。
+    if (!realtimeModulePromiseRef.current) {
+      realtimeModulePromiseRef.current = import('@openai/agents/realtime')
+        .catch(() => { realtimeModulePromiseRef.current = null; return null })
+    }
+    // Token prefetch: clientSecretをメモリにキャッシュ（60秒TTL）。
+    fetch('/api/ai/realtime-token', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      credentials: 'include', body: JSON.stringify({ model: RT_MODEL }),
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.clientSecret) {
+          prefetchedTokenRef.current = { clientSecret: d.clientSecret, fetchedAt: Date.now() }
+          console.debug('[JARVIS startup] token prefetched')
+        }
+      })
+      .catch(() => { /* prefetch失敗はsilentに無視。connectRealtime()でfallback取得 */ })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const setVoiceSettings = React.useCallback((s: VoiceSettings) => {
     setVoiceSettingsSt(s)
@@ -1836,22 +1870,50 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     voiceEngineModeRef.current = 'realtime-connecting'
 
     try {
-      const tokenRes = await fetch('/api/ai/realtime-token', {
-        method:      'POST',
-        headers:     { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body:        JSON.stringify({ model: RT_MODEL }),
-      })
-      if (!tokenRes.ok) {
-        const errBody = await tokenRes.text().catch(() => '')
-        throw new Error(`token_failed:${tokenRes.status} ${errBody}`)
+      const startupAt = performance.now()
+      console.debug('[JARVIS startup] START', Math.round(startupAt))
+
+      // ── Prefetched token を検証 ────────────────────────────────
+      const cached = prefetchedTokenRef.current
+      const isValid = !!cached && (Date.now() - cached.fetchedAt) < PREFETCH_TTL_MS
+
+      // ── Token + SDK module を並列取得 ─────────────────────────
+      // SDK moduleはpreload済みPromiseを再利用（二重importなし）。
+      // Token: TTL内のキャッシュがあればfetch 0回。なければAPI呼び出し。
+      if (!realtimeModulePromiseRef.current) {
+        realtimeModulePromiseRef.current = import('@openai/agents/realtime')
       }
-      const tokenData = await tokenRes.json()
-      const clientSecret: string | null = tokenData.clientSecret ?? null
+      const modulePromise = realtimeModulePromiseRef.current
+
+      const tokenPromise: Promise<string> = isValid
+        ? Promise.resolve(cached!.clientSecret)
+        : fetch('/api/ai/realtime-token', {
+            method:      'POST',
+            headers:     { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body:        JSON.stringify({ model: RT_MODEL }),
+          }).then(async r => {
+            if (!r.ok) {
+              const errBody = await r.text().catch(() => '')
+              throw new Error(`token_failed:${r.status} ${errBody}`)
+            }
+            const d = await r.json()
+            const s: string | null = d.clientSecret ?? null
+            if (!s) throw new Error('no_token: clientSecret missing in response')
+            return s
+          })
+
+      const [clientSecret, realtimeModule] = await Promise.all([tokenPromise, modulePromise])
       if (!clientSecret) throw new Error('no_token: clientSecret missing in response')
 
+      // prefetched tokenを消費（同一secretを2セッションで再利用しない）
+      if (isValid) prefetchedTokenRef.current = null
+
+      console.debug('[JARVIS startup] TOKEN_AND_MODULE_READY', Math.round(performance.now() - startupAt), 'ms',
+        isValid ? '(token: prefetched)' : '(token: fetched)')
+
       // tool() ファクトリを取得 — plain objectではなくFunctionTool(invoke付き)を生成するために必須
-      const { RealtimeAgent, RealtimeSession, tool: toolFactory } = await import('@openai/agents/realtime') as any
+      const { RealtimeAgent, RealtimeSession, tool: toolFactory } = realtimeModule as any
       const tools   = buildHikaruRealtimeTools(router, projectIdRef, toolFactory, pathnameRef)
       const agent   = new RealtimeAgent({ name: 'JARVIS Worker Realtime', instructions: RT_SYSTEM_PROMPT, tools })
       // transport: 'webrtc' は ephemeral client secret (ek_...) での接続に必須
@@ -2008,6 +2070,7 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
         }, 1500)
       })
 
+      console.debug('[JARVIS startup] CONNECT_START', Math.round(performance.now() - startupAt), 'ms')
       await session.connect({ apiKey: clientSecret } as any)
 
       // connect()が正常解決 = WebRTC接続確立。イベント待ちせず即座にrealtime状態をセット。
@@ -2015,6 +2078,7 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
       setVoiceEngineMode('realtime')
       voiceEngineModeRef.current = 'realtime'
       setModeSync('listening')
+      console.debug('[JARVIS startup] LISTENING', Math.round(performance.now() - startupAt), 'ms total')
 
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
