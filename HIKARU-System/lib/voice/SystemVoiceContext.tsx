@@ -1971,8 +1971,26 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
       const tools   = buildHikaruRealtimeTools(router, projectIdRef, toolFactory, pathnameRef)
       const agent   = new RealtimeAgent({ name: 'JARVIS Worker Realtime', instructions: RT_SYSTEM_PROMPT, tools })
       // rtcTransport インスタンスを直接作成 → mediaStream injection 可能
-      // eagerness: 'high' でsemantic_VADのターン検出を高速化
-      const rtcTransport = new OpenAIRealtimeWebRTC(preObtainedStream ? { mediaStream: preObtainedStream } : {})
+      // changePeerConnection でRTCPeerConnectionのライフサイクルイベントを計測（デバッグ専用）
+      const rtcTransport = new OpenAIRealtimeWebRTC({
+        ...(preObtainedStream ? { mediaStream: preObtainedStream } : {}),
+        changePeerConnection: async (pc: any) => {
+          console.debug('[JARVIS WebRTC] PC_CREATED', Math.round(performance.now() - startupAt), 'ms')
+          pc.addEventListener('icegatheringstatechange', () =>
+            console.debug('[JARVIS WebRTC] ICE_GATHER:', pc.iceGatheringState,
+              '+' + Math.round(performance.now() - startupAt) + 'ms'))
+          pc.addEventListener('iceconnectionstatechange', () =>
+            console.debug('[JARVIS WebRTC] ICE_STATE:', pc.iceConnectionState,
+              '+' + Math.round(performance.now() - startupAt) + 'ms'))
+          pc.addEventListener('connectionstatechange', () =>
+            console.debug('[JARVIS WebRTC] PC_STATE:', pc.connectionState,
+              '+' + Math.round(performance.now() - startupAt) + 'ms'))
+          pc.addEventListener('signalingstatechange', () =>
+            console.debug('[JARVIS WebRTC] SIGNALING:', pc.signalingState,
+              '+' + Math.round(performance.now() - startupAt) + 'ms'))
+          return pc
+        },
+      } as any)
       const session = new RealtimeSession(agent, {
         transport: rtcTransport,
         model: RT_MODEL,
@@ -1984,6 +2002,20 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
           },
         },
       } as any)
+
+      // ── WebRTC深層タイミング計測（デバッグ専用、本番ログ最小） ────────
+      // session.created  = DataChannel開通直後のサーバー初回応答
+      // session.updated  = session.update ACK（5秒タイムアウトの監視対象）
+      // session.updated が来ないと SDKの5000ms timeoutが発火し connect() が約5秒で強制解決する。
+      session.on?.('transport_event', (evt: any) => {
+        if (evt?.type === 'session.created') {
+          console.debug('[JARVIS WebRTC] SESSION_CREATED (DataChannel open + server ack)',
+            Math.round(performance.now() - startupAt), 'ms')
+        } else if (evt?.type === 'session.updated') {
+          console.debug('[JARVIS WebRTC] SESSION_UPDATED (config ACK — 5s timeout NOT fired)',
+            Math.round(performance.now() - startupAt), 'ms')
+        }
+      })
 
       // ── @openai/agents-realtime v0.17 正式イベント ──────────────
       // 注: connected/disconnected/agent_start_speech/agent_end_speech/
