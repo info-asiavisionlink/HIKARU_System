@@ -1420,8 +1420,8 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
   // モジュールPromiseをキャッシュ。同一Promiseを複数回awaitしても安全（resolved後は即解決）。
   const realtimeModulePromiseRef = React.useRef<Promise<any> | null>(null)
   // clientSecretを短期メモリキャッシュ。localStorage/sessionStorage/DB禁止。
-  // TTL = 60秒（API有効期限600秒の1/10。安全マージンを十分に確保）。
-  const PREFETCH_TTL_MS = 60_000
+  // TTL = 480秒（API有効期限600秒の80%。典型的利用2〜5分をカバー）。
+  const PREFETCH_TTL_MS = 480_000
   type PrefetchedToken = { clientSecret: string; fetchedAt: number }
   const prefetchedTokenRef = React.useRef<PrefetchedToken | null>(null)
 
@@ -1433,13 +1433,10 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
   // ─── Startup speed: Provider mount後にSDKとTokenをバックグラウンドpreload ──
   // WebRTC接続・RealtimeSession生成・AI課金は一切しない。
   // SDKモジュールのダウンロードとclientSecret取得のみ。
-  React.useEffect(() => {
-    // SDK preload: importのみ。RealtimeSession/Agent/WebRTCは作らない。
-    if (!realtimeModulePromiseRef.current) {
-      realtimeModulePromiseRef.current = import('@openai/agents/realtime')
-        .catch(() => { realtimeModulePromiseRef.current = null; return null })
-    }
-    // Token prefetch: clientSecretをメモリにキャッシュ（60秒TTL）。
+  const refreshToken = React.useCallback(() => {
+    // 既に有効なtokenがあれば更新しない（無駄なAPI呼び出し防止）
+    const existing = prefetchedTokenRef.current
+    if (existing && (Date.now() - existing.fetchedAt) < PREFETCH_TTL_MS) return
     fetch('/api/ai/realtime-token', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       credentials: 'include', body: JSON.stringify({ model: RT_MODEL }),
@@ -1448,10 +1445,32 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
       .then(d => {
         if (d?.clientSecret) {
           prefetchedTokenRef.current = { clientSecret: d.clientSecret, fetchedAt: Date.now() }
-          console.debug('[JARVIS startup] token prefetched')
+          console.debug('[JARVIS startup] PREFETCH_TOKEN_READY (age=0ms)')
         }
       })
       .catch(() => { /* prefetch失敗はsilentに無視。connectRealtime()でfallback取得 */ })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  React.useEffect(() => {
+    // SDK preload: importのみ。RealtimeSession/Agent/WebRTCは作らない。
+    if (!realtimeModulePromiseRef.current) {
+      console.debug('[JARVIS startup] PREFETCH_MODULE_START')
+      realtimeModulePromiseRef.current = import('@openai/agents/realtime')
+        .then(m => { console.debug('[JARVIS startup] PREFETCH_MODULE_READY'); return m })
+        .catch(() => { realtimeModulePromiseRef.current = null; return null })
+    }
+    // Token prefetch: clientSecretをメモリにキャッシュ（480秒TTL = 8分）。
+    console.debug('[JARVIS startup] PREFETCH_TOKEN_START')
+    refreshToken()
+
+    // Page visibility復帰時に token が期限切れなら再取得（1回のみ、無限polling禁止）
+    const handleVisibility = () => {
+      if (document.visibilityState !== 'visible') return
+      refreshToken()
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -1903,14 +1922,17 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
             return s
           })
 
+      const moduleIsPreloaded = !!(realtimeModulePromiseRef.current)
       const [clientSecret, realtimeModule] = await Promise.all([tokenPromise, modulePromise])
       if (!clientSecret) throw new Error('no_token: clientSecret missing in response')
 
       // prefetched tokenを消費（同一secretを2セッションで再利用しない）
       if (isValid) prefetchedTokenRef.current = null
 
-      console.debug('[JARVIS startup] TOKEN_AND_MODULE_READY', Math.round(performance.now() - startupAt), 'ms',
-        isValid ? '(token: prefetched)' : '(token: fetched)')
+      const tokenAndModuleMs = Math.round(performance.now() - startupAt)
+      console.debug('[JARVIS startup] TOKEN_AND_MODULE_READY', tokenAndModuleMs, 'ms',
+        '| TOKEN_SOURCE:', isValid ? 'PREFETCHED' : 'FETCHED',
+        '| MODULE_SOURCE:', moduleIsPreloaded ? 'PRELOADED' : 'COLD')
 
       // tool() ファクトリを取得 — plain objectではなくFunctionTool(invoke付き)を生成するために必須
       const { RealtimeAgent, RealtimeSession, tool: toolFactory } = realtimeModule as any
@@ -2070,15 +2092,21 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
         }, 1500)
       })
 
-      console.debug('[JARVIS startup] CONNECT_START', Math.round(performance.now() - startupAt), 'ms')
+      const connectStartMs = Math.round(performance.now() - startupAt)
+      console.debug('[JARVIS startup] CONNECT_START', connectStartMs, 'ms')
+      const connectAt = performance.now()
       await session.connect({ apiKey: clientSecret } as any)
+      const sessionConnectMs = Math.round(performance.now() - connectAt)
 
       // connect()が正常解決 = WebRTC接続確立。イベント待ちせず即座にrealtime状態をセット。
       realtimeSessionRef.current = session
       setVoiceEngineMode('realtime')
       voiceEngineModeRef.current = 'realtime'
       setModeSync('listening')
-      console.debug('[JARVIS startup] LISTENING', Math.round(performance.now() - startupAt), 'ms total')
+      const totalMs = Math.round(performance.now() - startupAt)
+      console.debug('[JARVIS startup] LISTENING', totalMs, 'ms total',
+        '| SESSION_CONNECT_MS:', sessionConnectMs,
+        '| PRE_CONNECT_MS:', connectStartMs)
 
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
