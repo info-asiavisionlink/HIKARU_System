@@ -1424,6 +1424,9 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
   const PREFETCH_TTL_MS = 480_000
   type PrefetchedToken = { clientSecret: string; fetchedAt: number }
   const prefetchedTokenRef = React.useRef<PrefetchedToken | null>(null)
+  // getUserMediaをsession.connect()と並列で事前取得したstream（permission済みのみ）。
+  // close時はSDKが停止しないため自分でstopする。
+  const preObtainedMicStreamRef = React.useRef<MediaStream | null>(null)
 
   React.useEffect(() => { voiceEngineModeRef.current = voiceEngineMode }, [voiceEngineMode])
 
@@ -1593,6 +1596,11 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     try { realtimeSessionRef.current?.disconnect?.() } catch {}
     realtimeSessionRef.current = null
     micTrackRef.current = null
+    // pre-obtained MediaStreamを自分でstop（mediaStream提供時SDKはtrackを停止しない）
+    if (preObtainedMicStreamRef.current) {
+      try { preObtainedMicStreamRef.current.getTracks().forEach(t => t.stop()) } catch {}
+      preObtainedMicStreamRef.current = null
+    }
     setVoiceEngineMode('off')
     voiceEngineModeRef.current = 'off'
   }, [clearActivityTimers, clearResumeTimer, setModeSync])
@@ -1613,6 +1621,10 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
     try { realtimeSessionRef.current?.disconnect?.() } catch {}
     realtimeSessionRef.current = null
     micTrackRef.current = null
+    if (preObtainedMicStreamRef.current) {
+      try { preObtainedMicStreamRef.current.getTracks().forEach(t => t.stop()) } catch {}
+      preObtainedMicStreamRef.current = null
+    }
     setVoiceEngineMode('off')
     voiceEngineModeRef.current = 'off'
   }, [clearActivityTimers, clearResumeTimer, setModeSync])
@@ -1923,7 +1935,24 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
           })
 
       const moduleIsPreloaded = !!(realtimeModulePromiseRef.current)
-      const [clientSecret, realtimeModule] = await Promise.all([tokenPromise, modulePromise])
+
+      // ── getUserMedia を token/module と並列取得 ─────────────────
+      // permission済みなら~10ms で解決。未許可 or エラーは null → SDK fallback。
+      // ユーザーが明示的にJARVIS ONを押した後のみ実行（自動マイク起動禁止）。
+      const getMicIfPermitted = async (): Promise<MediaStream | null> => {
+        try {
+          const perm = await navigator.permissions.query({ name: 'microphone' as PermissionName })
+          if (perm.state !== 'granted') return null
+          const s = await navigator.mediaDevices.getUserMedia({ audio: true })
+          preObtainedMicStreamRef.current = s
+          return s
+        } catch { return null }
+      }
+      const micPromise = getMicIfPermitted()
+
+      const [clientSecret, realtimeModule, preObtainedStream] = await Promise.all([
+        tokenPromise, modulePromise, micPromise,
+      ])
       if (!clientSecret) throw new Error('no_token: clientSecret missing in response')
 
       // prefetched tokenを消費（同一secretを2セッションで再利用しない）
@@ -1932,18 +1961,22 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
       const tokenAndModuleMs = Math.round(performance.now() - startupAt)
       console.debug('[JARVIS startup] TOKEN_AND_MODULE_READY', tokenAndModuleMs, 'ms',
         '| TOKEN_SOURCE:', isValid ? 'PREFETCHED' : 'FETCHED',
-        '| MODULE_SOURCE:', moduleIsPreloaded ? 'PRELOADED' : 'COLD')
+        '| MODULE_SOURCE:', moduleIsPreloaded ? 'PRELOADED' : 'COLD',
+        '| MIC_SOURCE:', preObtainedStream ? 'PRE_OBTAINED' : 'SDK_DEFAULT')
 
-      // tool() ファクトリを取得 — plain objectではなくFunctionTool(invoke付き)を生成するために必須
-      const { RealtimeAgent, RealtimeSession, tool: toolFactory } = realtimeModule as any
+      // tool() ファクトリ + OpenAIRealtimeWebRTC を取得
+      // OpenAIRealtimeWebRTC に mediaStream を渡すことで connect() 内の getUserMedia をスキップ。
+      // SDK公式サポート: options.mediaStream が provided なら getUserMedia を呼ばない。
+      const { RealtimeAgent, RealtimeSession, OpenAIRealtimeWebRTC, tool: toolFactory } = realtimeModule as any
       const tools   = buildHikaruRealtimeTools(router, projectIdRef, toolFactory, pathnameRef)
       const agent   = new RealtimeAgent({ name: 'JARVIS Worker Realtime', instructions: RT_SYSTEM_PROMPT, tools })
-      // transport: 'webrtc' は ephemeral client secret (ek_...) での接続に必須
-      // eagerness: 'high' でsemantic_VADのターン検出を高速化（Latency改善）
+      // rtcTransport インスタンスを直接作成 → mediaStream injection 可能
+      // eagerness: 'high' でsemantic_VADのターン検出を高速化
+      const rtcTransport = new OpenAIRealtimeWebRTC(preObtainedStream ? { mediaStream: preObtainedStream } : {})
       const session = new RealtimeSession(agent, {
-        transport: 'webrtc',
-        model:     RT_MODEL,
-        config:    {
+        transport: rtcTransport,
+        model: RT_MODEL,
+        config: {
           audio: {
             input: {
               turnDetection: { type: 'semantic_vad', eagerness: 'high' },
@@ -2113,6 +2146,11 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
       console.error('[realtime-connect] failed:', msg)
       realtimeSessionRef.current = null
       micTrackRef.current = null
+      // 接続失敗時もpre-obtained streamをクリーンアップ
+      if (preObtainedMicStreamRef.current) {
+        try { preObtainedMicStreamRef.current.getTracks().forEach(t => t.stop()) } catch {}
+        preObtainedMicStreamRef.current = null
+      }
       setVoiceEngineMode('off')
       voiceEngineModeRef.current = 'off'
       // Engine OFF時はSession状態もリセット（UI整合性: 「会話中」+「VOICE ENGINE OFF」矛盾を防ぐ）
