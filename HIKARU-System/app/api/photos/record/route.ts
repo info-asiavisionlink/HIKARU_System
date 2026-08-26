@@ -39,13 +39,18 @@ export async function POST(req: NextRequest) {
     // 1. job ownership再確認
     const { data: job } = await admin
       .from('jobs')
-      .select('id, project_id, worker_id')
+      .select('id, project_id, worker_id, status')
       .eq('id', jobId)
       .eq('worker_id', uid)
       .neq('status', 'cancelled')
       .maybeSingle()
 
     if (!job) return NextResponse.json({ error: 'job not found' }, { status: 404 })
+
+    // JOB-C6A: completed Jobへの写真record保存をブロック（ownership確認後、DB書込前）
+    if (job.status === 'completed') {
+      return NextResponse.json({ error: 'job already completed' }, { status: 409 })
+    }
 
     // 2. spot ownership再確認
     const { data: spot } = await admin

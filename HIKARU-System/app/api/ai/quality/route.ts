@@ -51,9 +51,16 @@ async function handleEvaluate(body: any, uid: string, admin: any) {
   }
 
   // Job ownership確認（adminクライアントはRLSをバイパスするため明示確認）
-  const { data: job } = await admin.from('jobs').select('id').eq('id', jobId).eq('worker_id', uid).maybeSingle()
+  const { data: job } = await admin.from('jobs').select('id, status').eq('id', jobId).eq('worker_id', uid).maybeSingle()
   if (!job) {
     return Response.json({ success: false, error: { code: 'FORBIDDEN', message: 'このジョブへのアクセス権がありません' } }, { status: 403 })
+  }
+  // JOB-C6A: completed JobへのAI評価をブロック（ownership確認後、AI call前）
+  if (job.status === 'completed') {
+    return Response.json(
+      { success: false, error: { code: 'JOB_ALREADY_COMPLETED', message: 'この作業は既に完了しているため変更できません。' } },
+      { status: 409 },
+    )
   }
 
   // 撮影箇所名を取得
@@ -106,9 +113,16 @@ async function handleEvaluateAll(body: any, uid: string, admin: any) {
   }
 
   // jobのアクセス権確認
-  const { data: job } = await admin.from('jobs').select('id, project_id').eq('id', jobId).eq('worker_id', uid).single()
+  const { data: job } = await admin.from('jobs').select('id, project_id, status').eq('id', jobId).eq('worker_id', uid).single()
   if (!job) {
     return Response.json({ success: false, error: { code: 'FORBIDDEN', message: 'このジョブへのアクセス権がありません' } }, { status: 403 })
+  }
+  // JOB-C6A: completed JobへのAI一括評価をブロック（ownership確認後、AI loop前）
+  if (job.status === 'completed') {
+    return Response.json(
+      { success: false, error: { code: 'JOB_ALREADY_COMPLETED', message: 'この作業は既に完了しているため変更できません。' } },
+      { status: 409 },
+    )
   }
 
   // 撮影箇所一覧取得（project_id ベース）

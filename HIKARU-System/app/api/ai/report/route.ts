@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
     const { data: job } = await admin
       .from('jobs')
       .select(`
-        id, project_id, worker_id, company_id,
+        id, project_id, worker_id, company_id, status,
         work_date, started_at, completed_at,
         projects(
           id, name, code, notes,
@@ -50,6 +50,14 @@ export async function POST(req: NextRequest) {
 
     if (!job) {
       return Response.json({ success: false, error: { code: 'NOT_FOUND', message: 'ジョブが見つかりません' } }, { status: 404 })
+    }
+
+    // JOB-C6A: completed Jobへの報告書生成をブロック（ownership確認後、OpenAI call前）
+    if ((job as any).status === 'completed') {
+      return Response.json(
+        { success: false, error: { code: 'JOB_ALREADY_COMPLETED', message: 'この作業は既に完了しているため変更できません。' } },
+        { status: 409 },
+      )
     }
 
     const project = (job as any).projects
