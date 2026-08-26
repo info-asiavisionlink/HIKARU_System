@@ -294,6 +294,12 @@ export default function EvaluationPage() {
     }
   }
 
+  // QUALITY-FRESH: stale評価検出
+  const hasStaleEvaluations = React.useMemo(
+    () => evaluations.some((e) => e.fresh === false),
+    [evaluations],
+  )
+
   // サマリー計算
   const computedSummary = React.useMemo(() => {
     if (evaluations.length === 0) return null
@@ -325,6 +331,17 @@ export default function EvaluationPage() {
       <WorkerHeader title="AI品質評価" showBack />
 
       <div className="pb-32">
+        {/* QUALITY-FRESH: stale警告バナー */}
+        {!evaluating && hasStaleEvaluations && (
+          <div className="mx-4 mt-4 rounded-[var(--radius-xl)] bg-[var(--color-warning-muted)] border border-[var(--color-warning)]/40 px-4 py-3 flex items-start gap-2.5">
+            <AlertTriangle className="h-4 w-4 text-[var(--color-warning-foreground)] shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-[var(--color-warning-foreground)]">写真が更新されています</p>
+              <p className="text-xs text-[var(--color-warning-foreground)]/80 mt-0.5">撮り直した写真があります。AI品質評価を再実行してください。</p>
+            </div>
+          </div>
+        )}
+
         {/* 実行中 */}
         {evaluating && (
           <div className="flex flex-col items-center justify-center py-16 px-4 text-center">

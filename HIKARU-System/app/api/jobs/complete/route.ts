@@ -1,10 +1,27 @@
 import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
+// ============================================================
+// Evaluation Freshness（QUALITY-FRESH）
+// URL完全一致のみFRESH。NULL = STALE。
+// ============================================================
+function isEvaluationFresh(
+  evaluation: { evaluated_before_url: string | null; evaluated_after_url: string | null } | null | undefined,
+  currentBeforeUrl: string,
+  currentAfterUrl:  string,
+): boolean {
+  return !!(
+    evaluation?.evaluated_before_url &&
+    evaluation?.evaluated_after_url &&
+    evaluation.evaluated_before_url === currentBeforeUrl &&
+    evaluation.evaluated_after_url  === currentAfterUrl
+  )
+}
+
 // POST /api/jobs/complete
 // ブラウザSupabase経由の completeJob() ハングリスクを回避するサーバー版。
 // hk_s_uid cookie で Worker確認 → worker_id / company_id 二重所有権確認 →
-// 二重完了防止 → jobs UPDATE
+// 二重完了防止 → Evaluation freshnessチェック → jobs UPDATE
 export async function POST(req: NextRequest) {
   const uid = req.cookies.get('hk_s_uid')?.value
   if (!uid) return Response.json({ error: 'unauthorized' }, { status: 401 })
@@ -48,6 +65,35 @@ export async function POST(req: NextRequest) {
     // in_progress 以外は完了不可
     if (job.status !== 'in_progress') {
       return Response.json({ error: 'job is not in progress' }, { status: 400 })
+    }
+
+    // QUALITY-FRESH: 写真撮り直し後に古いEvaluationでcompleteできないようにする
+    const [photosRes, evalsRes] = await Promise.all([
+      supabase.from('photos').select('spot_id, photo_type, url').eq('job_id', jobId),
+      supabase.from('ai_evaluations').select('spot_id, evaluated_before_url, evaluated_after_url').eq('job_id', jobId),
+    ])
+
+    const beforeUrlBySpot: Record<string, string> = {}
+    const afterUrlBySpot:  Record<string, string> = {}
+    for (const p of ((photosRes.data ?? []) as any[])) {
+      if (p.photo_type === 'before') beforeUrlBySpot[p.spot_id] = p.url ?? ''
+      if (p.photo_type === 'after')  afterUrlBySpot[p.spot_id]  = p.url ?? ''
+    }
+
+    const staleEvals = ((evalsRes.data ?? []) as any[]).filter((ev: any) =>
+      !isEvaluationFresh(ev, beforeUrlBySpot[ev.spot_id] ?? '', afterUrlBySpot[ev.spot_id] ?? '')
+    )
+
+    if (staleEvals.length > 0) {
+      return Response.json(
+        {
+          error:   'evaluations are stale',
+          code:    'EVALUATION_STALE',
+          message: '写真が更新されているためAI品質評価を再実行してください。',
+          spotIds: (staleEvals as any[]).map((e: any) => e.spot_id),
+        },
+        { status: 409 },
+      )
     }
 
     const { data: updated, error: updateError } = await supabase

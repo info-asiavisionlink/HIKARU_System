@@ -22,6 +22,7 @@ export interface EvaluationRow {
   photo_quality_issues: string[] | null
   created_at: string
   photo_spots?: { name: string; is_required: boolean }
+  fresh?: boolean  // 現在の写真と評価時の写真が一致するか (QUALITY-FRESH)
 }
 
 export interface EvaluationSummary {

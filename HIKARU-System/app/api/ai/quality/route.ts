@@ -3,6 +3,24 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { evaluateBeforeAfter, checkPhotoQuality } from '@/modules/quality-ai'
 
 // ============================================================
+// Evaluation Freshness（QUALITY-FRESH）
+// URL完全一致のみFRESH。NULL = STALE（撮影URL不明な旧評価）。
+// ============================================================
+
+function isEvaluationFresh(
+  evaluation: { evaluated_before_url: string | null; evaluated_after_url: string | null } | null | undefined,
+  currentBeforeUrl: string,
+  currentAfterUrl:  string,
+): boolean {
+  return !!(
+    evaluation?.evaluated_before_url &&
+    evaluation?.evaluated_after_url &&
+    evaluation.evaluated_before_url === currentBeforeUrl &&
+    evaluation.evaluated_after_url  === currentAfterUrl
+  )
+}
+
+// ============================================================
 // POST /api/ai/quality
 // action: 'check' | 'evaluate' | 'evaluate-all'
 // 認証: hk_s_uid cookie（ミドルウェア検証済み）
@@ -63,6 +81,18 @@ async function handleEvaluate(body: any, uid: string, admin: any) {
     )
   }
 
+  // QUALITY-FRESH: 同じBefore/AfterURLなら既存評価を返す（Vision AI 0 call）
+  const { data: cachedEval } = await admin
+    .from('ai_evaluations')
+    .select('evaluated_before_url, evaluated_after_url, score, passed, recommendation, comment, comparison, improvements, remaining_issues, dirty_removal, thoroughness, shine, before_summary, after_summary, photo_quality_ok, photo_quality_issues')
+    .eq('job_id', jobId)
+    .eq('spot_id', spotId)
+    .maybeSingle()
+
+  if (isEvaluationFresh(cachedEval, beforeUrl, afterUrl)) {
+    return Response.json({ success: true, data: cachedEval, fromCache: true })
+  }
+
   // 撮影箇所名を取得
   const { data: spot } = await admin.from('photo_spots').select('name').eq('id', spotId).single()
   const locationName = spot?.name ?? '撮影箇所'
@@ -70,26 +100,28 @@ async function handleEvaluate(body: any, uid: string, admin: any) {
   try {
     const result = await evaluateBeforeAfter(beforeUrl, afterUrl, locationName)
 
-    // DB保存（upsert）
+    // DB保存（upsert・evaluated URLでFreshness判定可能にする）
     const { error } = await admin.from('ai_evaluations').upsert(
       {
-        job_id:          jobId,
-        spot_id:         spotId,
-        before_photo_id: beforePhotoId ?? null,
-        after_photo_id:  afterPhotoId  ?? null,
-        score:           result.score,
-        dirty_removal:   result.breakdown.dirtyRemoval,
-        thoroughness:    result.breakdown.thoroughness,
-        shine:           result.breakdown.shine,
-        passed:          result.passed,
-        recommendation:  result.recommendation,
-        before_summary:  result.beforeAnalysis.summary,
-        after_summary:   result.afterAnalysis.summary,
-        comparison:      result.comparison,
-        comment:         result.comment,
-        improvements:    result.improvements,
-        remaining_issues: result.afterAnalysis.remainingIssues,
-        photo_quality_ok: result.photoQuality.beforeValid && result.photoQuality.afterValid,
+        job_id:               jobId,
+        spot_id:              spotId,
+        before_photo_id:      beforePhotoId ?? null,
+        after_photo_id:       afterPhotoId  ?? null,
+        evaluated_before_url: beforeUrl,
+        evaluated_after_url:  afterUrl,
+        score:                result.score,
+        dirty_removal:        result.breakdown.dirtyRemoval,
+        thoroughness:         result.breakdown.thoroughness,
+        shine:                result.breakdown.shine,
+        passed:               result.passed,
+        recommendation:       result.recommendation,
+        before_summary:       result.beforeAnalysis.summary,
+        after_summary:        result.afterAnalysis.summary,
+        comparison:           result.comparison,
+        comment:              result.comment,
+        improvements:         result.improvements,
+        remaining_issues:     result.afterAnalysis.remainingIssues,
+        photo_quality_ok:     result.photoQuality.beforeValid && result.photoQuality.afterValid,
         photo_quality_issues: result.photoQuality.issues,
       },
       { onConflict: 'job_id,spot_id' }
@@ -145,7 +177,17 @@ async function handleEvaluateAll(body: any, uid: string, admin: any) {
     if (p.photo_type === 'after')  photoMap[p.spot_id].after  = p
   }
 
-  const results: { spotId: string; spotName: string; success: boolean; data?: any; error?: string }[] = []
+  // QUALITY-FRESH: 既存評価を一括取得（N+1なし）
+  const { data: existingEvals } = await admin
+    .from('ai_evaluations')
+    .select('spot_id, evaluated_before_url, evaluated_after_url, score, passed, recommendation')
+    .eq('job_id', jobId)
+
+  const evalBySpot = new Map<string, { evaluated_before_url: string | null; evaluated_after_url: string | null; score: number; passed: boolean; recommendation: string }>(
+    (existingEvals ?? []).map((e: any) => [e.spot_id, e]),
+  )
+
+  const results: { spotId: string; spotName: string; success: boolean; fromCache?: boolean; data?: any; error?: string }[] = []
 
   for (const spot of (spots ?? [])) {
     const pair = photoMap[spot.id]
@@ -154,28 +196,47 @@ async function handleEvaluateAll(body: any, uid: string, admin: any) {
       continue
     }
 
+    // QUALITY-FRESH: 同じURLなら既存評価を再利用（Vision AI 0 call）
+    const existingEval = evalBySpot.get(spot.id)
+    if (isEvaluationFresh(existingEval, pair.before.url, pair.after.url)) {
+      results.push({
+        spotId:    spot.id,
+        spotName:  spot.name,
+        success:   true,
+        fromCache: true,
+        data: {
+          score:          existingEval!.score,
+          passed:         existingEval!.passed,
+          recommendation: existingEval!.recommendation,
+        },
+      })
+      continue
+    }
+
     try {
       const result = await evaluateBeforeAfter(pair.before.url, pair.after.url, spot.name)
 
       await admin.from('ai_evaluations').upsert(
         {
-          job_id:          jobId,
-          spot_id:         spot.id,
-          before_photo_id: pair.before.id,
-          after_photo_id:  pair.after.id,
-          score:           result.score,
-          dirty_removal:   result.breakdown.dirtyRemoval,
-          thoroughness:    result.breakdown.thoroughness,
-          shine:           result.breakdown.shine,
-          passed:          result.passed,
-          recommendation:  result.recommendation,
-          before_summary:  result.beforeAnalysis.summary,
-          after_summary:   result.afterAnalysis.summary,
-          comparison:      result.comparison,
-          comment:         result.comment,
-          improvements:    result.improvements,
-          remaining_issues: result.afterAnalysis.remainingIssues,
-          photo_quality_ok: result.photoQuality.beforeValid && result.photoQuality.afterValid,
+          job_id:               jobId,
+          spot_id:              spot.id,
+          before_photo_id:      pair.before.id,
+          after_photo_id:       pair.after.id,
+          evaluated_before_url: pair.before.url,
+          evaluated_after_url:  pair.after.url,
+          score:                result.score,
+          dirty_removal:        result.breakdown.dirtyRemoval,
+          thoroughness:         result.breakdown.thoroughness,
+          shine:                result.breakdown.shine,
+          passed:               result.passed,
+          recommendation:       result.recommendation,
+          before_summary:       result.beforeAnalysis.summary,
+          after_summary:        result.afterAnalysis.summary,
+          comparison:           result.comparison,
+          comment:              result.comment,
+          improvements:         result.improvements,
+          remaining_issues:     result.afterAnalysis.remainingIssues,
+          photo_quality_ok:     result.photoQuality.beforeValid && result.photoQuality.afterValid,
           photo_quality_issues: result.photoQuality.issues,
         },
         { onConflict: 'job_id,spot_id' }
@@ -233,15 +294,28 @@ export async function GET(req: NextRequest) {
     return Response.json({ success: false, error: { code: 'FORBIDDEN', message: 'このジョブへのアクセス権がありません' } }, { status: 403 })
   }
 
-  const { data, error } = await admin
-    .from('ai_evaluations')
-    .select('*, photo_spots(name, is_required)')
-    .eq('job_id', jobId)
-    .order('created_at', { ascending: true })
+  // 評価と現在写真を並列取得（QUALITY-FRESH: freshステータスを返すため）
+  const [evalsRes, photosRes] = await Promise.all([
+    admin.from('ai_evaluations').select('*, photo_spots(name, is_required)').eq('job_id', jobId).order('created_at', { ascending: true }),
+    admin.from('photos').select('spot_id, photo_type, url').eq('job_id', jobId),
+  ])
 
-  if (error) {
-    return Response.json({ success: false, error: { code: 'INTERNAL_ERROR', message: error.message } }, { status: 500 })
+  if (evalsRes.error) {
+    return Response.json({ success: false, error: { code: 'INTERNAL_ERROR', message: evalsRes.error.message } }, { status: 500 })
   }
 
-  return Response.json({ success: true, data: data ?? [] })
+  // 現在写真URLマップ（freshness判定用）
+  const beforeUrlBySpot: Record<string, string> = {}
+  const afterUrlBySpot:  Record<string, string> = {}
+  for (const p of (photosRes.data ?? [])) {
+    if ((p as any).photo_type === 'before') beforeUrlBySpot[(p as any).spot_id] = (p as any).url ?? ''
+    if ((p as any).photo_type === 'after')  afterUrlBySpot[(p as any).spot_id]  = (p as any).url ?? ''
+  }
+
+  const dataWithFresh = (evalsRes.data ?? []).map((ev: any) => ({
+    ...ev,
+    fresh: isEvaluationFresh(ev, beforeUrlBySpot[ev.spot_id] ?? '', afterUrlBySpot[ev.spot_id] ?? ''),
+  }))
+
+  return Response.json({ success: true, data: dataWithFresh })
 }
