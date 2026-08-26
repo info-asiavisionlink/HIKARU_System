@@ -14,8 +14,51 @@ import { cn, toast } from '@hikaru/ui'
 import {
   Star, CheckCircle2, XCircle, AlertTriangle, RefreshCw,
   ChevronDown, ChevronUp, Lightbulb, ArrowRight, CheckCheck,
-  BarChart3, FileText,
+  BarChart3, FileText, Camera,
 } from 'lucide-react'
+
+// ============================================================
+// 写真検証失敗カード（PHOTO-VALID）
+// ============================================================
+interface ValidationFailure {
+  spotId:   string
+  spotName: string
+  issues:   string[]
+}
+
+function ValidationFailureCard({ failure, projectId }: { failure: ValidationFailure; projectId: string }) {
+  return (
+    <div className="rounded-[var(--radius-xl)] border border-[var(--color-warning)]/40 overflow-hidden">
+      <div className="flex items-center gap-3 px-4 py-3.5 bg-[var(--color-surface)]">
+        <div className="flex flex-col items-center justify-center h-14 w-14 rounded-full shrink-0 text-[10px] font-bold text-center leading-tight bg-[var(--color-warning-muted)] text-[var(--color-warning-foreground)]">
+          評価<br />不能
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="font-semibold text-sm text-[var(--color-foreground)]">{failure.spotName}</p>
+            <span className="rounded-[var(--radius-full)] px-2 py-0.5 text-[10px] font-semibold bg-[var(--color-warning-muted)] text-[var(--color-warning-foreground)]">
+              ⚠️ 写真確認必要
+            </span>
+          </div>
+          {failure.issues.length > 0 && (
+            <ul className="mt-1 space-y-0.5">
+              {failure.issues.map((issue, i) => (
+                <li key={i} className="text-xs text-[var(--color-muted-foreground)]">・{issue}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <Link
+          href={`/jobs/${projectId}/after`}
+          className="shrink-0 flex items-center gap-1 text-xs px-3 py-1.5 rounded-[var(--radius-lg)] font-medium bg-[var(--color-warning-muted)] text-[var(--color-warning-foreground)]"
+        >
+          <Camera className="h-3.5 w-3.5" />
+          撮り直す
+        </Link>
+      </div>
+    </div>
+  )
+}
 
 // ============================================================
 // スコアサークル
@@ -203,7 +246,8 @@ export default function EvaluationPage() {
   const searchParams = useSearchParams()
   const autoRun = searchParams.get('run') === '1'
 
-  const [evaluations, setEvaluations] = React.useState<EvaluationRow[]>([])
+  const [evaluations, setEvaluations]               = React.useState<EvaluationRow[]>([])
+  const [validationFailures, setValidationFailures] = React.useState<ValidationFailure[]>([])
   const [photos, setPhotos]       = React.useState<any[]>([])
   const [jobId, setJobId]         = React.useState<string | null>(null)
   const [loading, setLoading]     = React.useState(true)
@@ -257,7 +301,20 @@ export default function EvaluationPage() {
         setSummary(result.summary)
         const updated = await loadEvaluations(targetJobId)
         setEvaluations(updated)
-        toast.success('AI品質評価が完了しました')
+
+        // PHOTO-VALID: 写真検証失敗スポットを抽出（DB保存なし・0点扱いなし）
+        const failures: ValidationFailure[] = (result.results ?? [])
+          .filter((r: any) => r.validationFailed === true)
+          .map((r: any) => ({ spotId: r.spotId, spotName: r.spotName, issues: r.issues ?? [] }))
+        setValidationFailures(failures)
+
+        if (failures.length === 0) {
+          toast.success('AI品質評価が完了しました')
+        } else if (updated.length > 0) {
+          toast.success(`${updated.length}箇所評価完了。${failures.length}箇所は写真の撮り直しが必要です。`)
+        } else {
+          toast.error('写真が評価条件を満たしていません。撮り直してください。')
+        }
       } else {
         toast.error(`評価に失敗しました: ${result.error}`)
       }
@@ -380,8 +437,8 @@ export default function EvaluationPage() {
           </div>
         )}
 
-        {/* 評価なし状態 */}
-        {!evaluating && evaluations.length === 0 && (
+        {/* 評価なし状態（評価もValidation失敗もない場合のみ） */}
+        {!evaluating && evaluations.length === 0 && validationFailures.length === 0 && (
           <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
             <BarChart3 className="h-14 w-14 text-[var(--color-muted-foreground)] opacity-40 mb-4" />
             <p className="text-base font-semibold">まだAI評価が実行されていません</p>
@@ -401,6 +458,18 @@ export default function EvaluationPage() {
                 evaluation={ev}
                 photos={getSpotPhotos(ev.spot_id)}
               />
+            ))}
+          </div>
+        )}
+
+        {/* PHOTO-VALID: 写真検証失敗スポット（0点扱いなし・DB記録なし） */}
+        {!evaluating && validationFailures.length > 0 && (
+          <div className="px-4 mt-4 space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-warning-foreground)]">
+              写真確認が必要な箇所 ({validationFailures.length}件)
+            </p>
+            {validationFailures.map((f) => (
+              <ValidationFailureCard key={f.spotId} failure={f} projectId={projectId} />
             ))}
           </div>
         )}

@@ -100,6 +100,18 @@ async function handleEvaluate(body: any, uid: string, admin: any) {
   try {
     const result = await evaluateBeforeAfter(beforeUrl, afterUrl, locationName)
 
+    // PHOTO-VALID: 写真検証NGならDB保存しない（スコア0をDBに残さない）
+    if (!result.evaluationPossible) {
+      return Response.json({
+        success:            false,
+        validationFailed:   true,
+        evaluationPossible: false,
+        validation:         result.validation,
+        issues:             result.validation?.issues ?? [],
+        error: { code: 'VALIDATION_FAILED', message: '写真が評価条件を満たしていません' },
+      })
+    }
+
     // DB保存（upsert・evaluated URLでFreshness判定可能にする）
     const { error } = await admin.from('ai_evaluations').upsert(
       {
@@ -187,7 +199,7 @@ async function handleEvaluateAll(body: any, uid: string, admin: any) {
     (existingEvals ?? []).map((e: any) => [e.spot_id, e]),
   )
 
-  const results: { spotId: string; spotName: string; success: boolean; fromCache?: boolean; data?: any; error?: string }[] = []
+  const results: { spotId: string; spotName: string; success: boolean; fromCache?: boolean; validationFailed?: boolean; validation?: any; issues?: string[]; data?: any; error?: string }[] = []
 
   for (const spot of (spots ?? [])) {
     const pair = photoMap[spot.id]
@@ -215,6 +227,20 @@ async function handleEvaluateAll(body: any, uid: string, admin: any) {
 
     try {
       const result = await evaluateBeforeAfter(pair.before.url, pair.after.url, spot.name)
+
+      // PHOTO-VALID: 写真検証NGならDB保存スキップ（スコア0を誤保存しない）
+      if (!result.evaluationPossible) {
+        results.push({
+          spotId:           spot.id,
+          spotName:         spot.name,
+          success:          false,
+          validationFailed: true,
+          validation:       result.validation,
+          issues:           result.validation?.issues ?? [],
+          error:            '写真が評価条件を満たしていません',
+        })
+        continue
+      }
 
       await admin.from('ai_evaluations').upsert(
         {

@@ -17,7 +17,19 @@ export interface PhotoQualityResult {
   message: string
 }
 
+export interface ValidationResult {
+  isCleaningScene: boolean
+  matchesSpot:     boolean
+  sameLocation:    boolean
+  comparable:      boolean
+  imageQualityOk:  boolean
+  confidence:      number
+  issues:          string[]
+}
+
 export interface SpotEvaluationResult {
+  evaluationPossible: boolean
+  validation?: ValidationResult
   photoQuality: {
     beforeValid: boolean
     afterValid: boolean
@@ -108,13 +120,46 @@ export async function evaluateBeforeAfter(
       },
     ],
     response_format: { type: 'json_object' },
-    max_tokens: 1000,
+    max_tokens: 1500,
     temperature: 0.2,
   })
 
-  const raw = response.choices[0]?.message.content ?? '{}'
+  const raw    = response.choices[0]?.message.content ?? '{}'
   const parsed = JSON.parse(raw)
 
+  // ── Validation Gate（Fail-closed）─────────────────────────
+  // AI応答に evaluationPossible がなければ保存禁止（Fail-closed）
+  const evaluationPossible: boolean =
+    typeof parsed.evaluationPossible === 'boolean' ? parsed.evaluationPossible : false
+
+  const validation: ValidationResult = parsed.validation ?? {
+    isCleaningScene: false,
+    matchesSpot:     false,
+    sameLocation:    false,
+    comparable:      false,
+    imageQualityOk:  false,
+    confidence:      0,
+    issues:          ['AI応答にValidation情報がありません'],
+  }
+
+  if (!evaluationPossible) {
+    return {
+      evaluationPossible: false,
+      validation,
+      photoQuality:   { beforeValid: false, afterValid: false, issues: validation.issues },
+      beforeAnalysis: { summary: '', dirtyPoints: [], dirtLevel: 'moderate' },
+      afterAnalysis:  { summary: '', improvements: [], remainingIssues: [] },
+      comparison:     '',
+      score:          0,  // 型互換用プレースホルダ。APIレイヤでDBへは保存しない
+      breakdown:      { dirtyRemoval: 0, thoroughness: 0, shine: 0 },
+      passed:         false,
+      recommendation: 'redo',
+      comment:        '',
+      improvements:   [],
+    }
+  }
+
+  // ── Validation OK → 清掃品質評価 ──────────────────────────
   const score = Math.max(0, Math.min(100, Number(parsed.score ?? 0)))
   const passed = score >= QUALITY_PASS_THRESHOLD
 
@@ -123,6 +168,8 @@ export async function evaluateBeforeAfter(
     score >= QUALITY_CHECK_THRESHOLD ? 'check' : 'redo'
 
   return {
+    evaluationPossible: true,
+    validation,
     photoQuality: {
       beforeValid: parsed.photoQuality?.beforeValid ?? true,
       afterValid:  parsed.photoQuality?.afterValid  ?? true,

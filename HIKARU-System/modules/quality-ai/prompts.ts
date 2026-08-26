@@ -24,10 +24,47 @@ export const PHOTO_QUALITY_CHECK_PROMPT = (locationName: string): string => `
 }
 `.trim()
 
-// ---- Before/After比較評価 ----
+// ---- Before/After比較評価（Validation Gate統合）----
 export const BEFORE_AFTER_EVALUATION_PROMPT = (locationName: string): string => `
 あなたは清掃業界の品質管理専門AIです。
-「${locationName}」の清掃前（Before）と清掃後（After）の写真を比較し、品質を評価してください。
+「${locationName}」の清掃前（Before）と清掃後（After）の写真を評価します。
+必ず以下の順序で実施し、JSON形式のみで回答してください。
+
+━━━ Step 1: 写真Validation（必ず最初に実施） ━━━
+
+以下の5項目を判定してください：
+
+1. isCleaningScene
+   両方の写真が清掃作業の現場（建物内部・設備・外構等）を写しているか。
+   NG例: 車・人物ポートレート・料理・空・風景・スクリーンショット・書類・商品
+
+2. matchesSpot
+   写真の内容が「${locationName}」に合理的に対応しているか。
+   Spot名が曖昧な場合は写っている内容から判断する。完全一致は不要。
+
+3. sameLocation
+   BeforeとAfterが同一の場所・同一の対象物を写しているか。
+   判断基準: 固定構造物（壁・柱・建具・設備の配置・床パターン・タイル）の一致
+   重要ルール:
+   - 清掃前後で色・光沢・明るさが大きく変わるのは正常。色の違いで別場所と判定禁止。
+   - 撮影角度・距離の軽微な差（10〜20度程度）は許容する。
+   - 完全別空間・別建物の場合のみ false とする。
+
+4. comparable
+   BeforeとAfterが同じ清掃対象について比較可能か。
+   NG例: Before=床全体、After=天井のみ / Before=洗面台、After=ドア
+
+5. imageQualityOk
+   両方の写真が評価に十分な画質か（明るさ・ピント・ブレ・撮影範囲を総合判断）
+
+【Validation判定ルール】
+- 上記5項目が全てtrue かつ confidence >= 0.6 の場合: evaluationPossible = true
+- 1つでもfalse または confidence < 0.6 の場合: evaluationPossible = false
+- evaluationPossible=false の場合、品質スコアを一切生成してはならない
+- 判断が曖昧な場合は issues に具体的理由を記載し confidence を下げること
+- 正常な清掃写真を厳しすぎて大量にrejectしてはならない
+
+━━━ Step 2: 品質評価（evaluationPossible=true の場合のみ実施） ━━━
 
 【評価の視点】
 熟練した品質管理者の目で以下を確認してください:
@@ -44,8 +81,39 @@ export const BEFORE_AFTER_EVALUATION_PROMPT = (locationName: string): string => 
 - 45-59点: 要改善。明らかな清掃漏れや汚れの残留あり
 - 0-44点: 不合格。再清掃が必要
 
-【必ずJSON形式で回答すること】
+【厳守事項】
+- 関係ない写真に品質スコアを付けない
+- Before/Afterが別場所なら採点しない
+- 指定Spotと一致しないなら採点しない
+
+━━━ 回答形式（JSON only） ━━━
+
+evaluationPossible=false の場合（scoreフィールドを含めないこと）:
 {
+  "validation": {
+    "isCleaningScene": false,
+    "matchesSpot": true,
+    "sameLocation": false,
+    "comparable": true,
+    "imageQualityOk": true,
+    "confidence": 0.2,
+    "issues": ["BeforeとAfterが異なる場所を写しています"]
+  },
+  "evaluationPossible": false
+}
+
+evaluationPossible=true の場合:
+{
+  "validation": {
+    "isCleaningScene": true,
+    "matchesSpot": true,
+    "sameLocation": true,
+    "comparable": true,
+    "imageQualityOk": true,
+    "confidence": 0.93,
+    "issues": []
+  },
+  "evaluationPossible": true,
   "photoQuality": {
     "beforeValid": true,
     "afterValid": true,
@@ -53,15 +121,15 @@ export const BEFORE_AFTER_EVALUATION_PROMPT = (locationName: string): string => 
   },
   "beforeAnalysis": {
     "summary": "Before写真の状態説明（1-2文）",
-    "dirtyPoints": ["ホコリが堆積している", "油汚れあり"],
+    "dirtyPoints": ["ホコリが堆積している"],
     "dirtLevel": "severe または moderate または light または clean"
   },
   "afterAnalysis": {
     "summary": "After写真の状態説明（1-2文）",
-    "improvements": ["ホコリを完全に除去", "光沢が出た"],
-    "remainingIssues": ["左下コーナーにわずかなホコリが残留"]
+    "improvements": ["ホコリを完全に除去"],
+    "remainingIssues": []
   },
-  "comparison": "BeforeとAfterを比較した具体的なコメント（2-3文。何が改善され、何が残っているかを明記）",
+  "comparison": "BeforeとAfterを比較した具体的なコメント（2-3文）",
   "score": 0から100の整数,
   "breakdown": {
     "dirtyRemoval": 汚れ除去度 0-100の整数,
@@ -71,6 +139,6 @@ export const BEFORE_AFTER_EVALUATION_PROMPT = (locationName: string): string => 
   "passed": 75点以上ならtrue,
   "recommendation": "pass または check または redo",
   "comment": "作業者への総合評価コメント（日本語・具体的に・2-3文）",
-  "improvements": ["改善提案1", "改善提案2"]
+  "improvements": ["改善提案1"]
 }
 `.trim()
