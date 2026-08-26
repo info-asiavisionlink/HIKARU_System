@@ -60,6 +60,24 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // Dedup: 既存Report確認（OpenAI callより前 — 二重生成・連打防止）
+    // NOTE: reports.job_id にUNIQUE制約がないため同時requestでのrace conditionは
+    //       DBレベルでは防止できない。UI連打・画面再遷移による重複は防止する。
+    const { data: existingReport } = await admin
+      .from('reports')
+      .select('id, version, content, overall_score')
+      .eq('job_id', jobId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (existingReport) {
+      return Response.json({
+        success: true,
+        data: { reportId: (existingReport as any).id, content: (existingReport as any).content },
+      })
+    }
+
     const project = (job as any).projects
 
     // ---- 写真取得 ----
@@ -151,15 +169,8 @@ export async function POST(req: NextRequest) {
     }
 
     // ---- 報告書コンテンツ構築 ----
-    const { data: existingReport } = await admin
-      .from('reports')
-      .select('version')
-      .eq('job_id', jobId)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-
-    const version = (existingReport?.version ?? 0) + 1
+    // dedupチェックで既存なしが確認済みのため version = 1 が確定
+    const version = 1
 
     const content: ReportContent = {
       project: {
@@ -209,7 +220,13 @@ export async function POST(req: NextRequest) {
       .select('id')
       .single()
 
-    if (saveErr) console.error('[report] save error:', saveErr.message)
+    if (saveErr) {
+      console.error('[report] save error:', saveErr.message)
+      return Response.json(
+        { success: false, error: { code: 'INTERNAL_ERROR', message: 'レポートの保存に失敗しました' } },
+        { status: 500 },
+      )
+    }
 
     // 報告書生成のたびに管理者へSystem通知（fire-and-forget・報告書処理を失敗させない）
     if (saved?.id) {
