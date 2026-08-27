@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import { useRouter }       from 'next/navigation'
-import { Settings, Volume2, Home, Bell, Calendar, Zap, X, Link2, Mic, Bot } from 'lucide-react'
+import { Settings, Volume2, Home, Bell, Calendar, Zap, X, Mic } from 'lucide-react'
 import { HikaruCore }      from '@/components/voice/HikaruCore'
 import { useSystemJarvis } from '@/lib/voice/SystemVoiceContext'
 import { browserTTS }      from '@/lib/voice/tts/browser'
@@ -11,25 +11,24 @@ import type { VoiceSettings, VoiceMode } from '@/lib/voice/state/types'
 
 // ============================================================
 // HIKARU AI Assistant — Central JARVIS Neon HUD
-// 中央JARVIS HUDが主役。マイクボタンなし。JARVISタップで起動/停止。
 // Voice Logic は一切変更しない。
 // ============================================================
 
-const BG     = '#020202'
-const GD     = '#FFD700'
-const GB     = '#FFE878'
-const GDim   = 'rgba(255,215,0,0.45)'
-const GBdr   = 'rgba(255,215,0,0.22)'
+const BG   = '#020202'
+const GD   = '#FFD700'
+const GB   = '#FFE878'
+const GDim = 'rgba(255,215,0,0.45)'
+const GBdr = 'rgba(255,215,0,0.22)'
 
-// Status item definition
+// Status definitions — used for single current-state display
 const STATUS_ITEMS = [
-  { key:'idle',       label:'STANDBY',    sub:'停止中',      color:'#C89010', dot:'#AA7800' },
-  { key:'connecting', label:'CONNECTING', sub:'接続中',      color:'#00AFFF', dot:'#00AFFF' },
-  { key:'listening',  label:'LISTENING',  sub:'聞いています', color:'#FFD700', dot:'#FFD700' },
-  { key:'processing', label:'THINKING',   sub:'考えています', color:'#FFB800', dot:'#FFB800' },
-  { key:'working',    label:'PROCESSING', sub:'処理中',      color:'#C030D8', dot:'#C030D8' },
-  { key:'speaking',   label:'SPEAKING',   sub:'応答しています',color:'#00D860', dot:'#00D860' },
-  { key:'error',      label:'ERROR',      sub:'接続エラー',   color:'#FF3030', dot:'#FF3030' },
+  { key:'idle',       label:'STANDBY',    sub:'停止中',       color:'#C89010', dot:'#AA7800' },
+  { key:'connecting', label:'CONNECTING', sub:'接続中',       color:'#00AFFF', dot:'#00AFFF' },
+  { key:'listening',  label:'LISTENING',  sub:'聞いています',  color:'#FFD700', dot:'#FFD700' },
+  { key:'processing', label:'THINKING',   sub:'考えています',  color:'#FFB800', dot:'#FFB800' },
+  { key:'working',    label:'PROCESSING', sub:'処理中',       color:'#C030D8', dot:'#C030D8' },
+  { key:'speaking',   label:'SPEAKING',   sub:'応答しています', color:'#00D860', dot:'#00D860' },
+  { key:'error',      label:'ERROR',      sub:'接続エラー',    color:'#FF3030', dot:'#FF3030' },
 ] as const
 
 type StatusKey = typeof STATUS_ITEMS[number]['key']
@@ -111,8 +110,8 @@ function SettingsPanel({settings,onClose,onSave}:{settings:VoiceSettings;onClose
 }
 
 // ─── Responsive HUD ──────────────────────────────────────────
-function JarvisHUD({ mode, isConnecting, onClick, isSession }: {
-  mode: VoiceMode; isConnecting: boolean; onClick: ()=>void; isSession: boolean
+function JarvisHUD({ mode, isConnecting, onClick }: {
+  mode: VoiceMode; isConnecting: boolean; onClick: ()=>void
 }) {
   const ref = React.useRef<HTMLDivElement>(null)
   const [sz, setSz] = React.useState(360)
@@ -120,7 +119,6 @@ function JarvisHUD({ mode, isConnecting, onClick, isSession }: {
   React.useEffect(()=>{
     if(!ref.current) return
     const ro = new ResizeObserver(([e])=>{
-      // HikaruCore W = H = size*1.04, so size = min(w,h)/1.04
       const cw=e.contentRect.width, ch=e.contentRect.height
       const s = Math.floor(Math.min(cw, ch) / 1.04)
       setSz(Math.min(Math.max(s, 200), 700))
@@ -138,36 +136,6 @@ function JarvisHUD({ mode, isConnecting, onClick, isSession }: {
   )
 }
 
-// ─── Right Panel Status Row ───────────────────────────────────
-function SRow({ item, active }: { item: typeof STATUS_ITEMS[number]; active: boolean }) {
-  return (
-    <div style={{display:'flex',alignItems:'flex-start',gap:10,padding:'6px 0',
-      borderBottom:'1px solid rgba(255,215,0,0.07)'}}>
-      <div style={{
-        width:9,height:9,borderRadius:'50%',flexShrink:0,marginTop:3,
-        background:item.dot,
-        boxShadow:active?`0 0 8px ${item.dot},0 0 18px ${item.dot}55`:'none',
-        opacity:active?1:.22,
-        transition:'all .35s',
-      }}/>
-      <div>
-        <div style={{
-          fontSize:11,fontWeight:active?700:400,
-          color:active?item.color:'rgba(255,255,255,.32)',
-          fontFamily:'monospace',letterSpacing:'.10em',
-          textShadow:active?`0 0 8px ${item.color}`:undefined,
-          transition:'all .35s',
-        }}>
-          {item.label}
-        </div>
-        <div style={{fontSize:10,color:active?'rgba(255,255,255,.68)':'rgba(255,255,255,.20)',marginTop:1}}>
-          {item.sub}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 // ─── Main ────────────────────────────────────────────────────
 function AssistantContent() {
   const router=useRouter()
@@ -179,7 +147,8 @@ function AssistantContent() {
     startSession, stopSession, handleUtterance,
     voiceSettings, setVoiceSettings,
     voiceEngineMode, disconnectRealtime,
-  }=useSystemJarvis()
+    messages,
+  } = useSystemJarvis()
 
   const isErr    = mode==='error'
   const isActive = mode==='listening'
@@ -193,12 +162,18 @@ function AssistantContent() {
 
   const toggleSession = () => isSession ? stopSession() : startSession()
 
+  // Conversation: show last 4 messages
+  const recentMsgs = messages.slice(-4)
+
   const QUICK=[
     {label:'ホームに戻る', utt:'ホームに戻って', Icon:Home},
     {label:'通知を確認',   utt:'通知を確認して', Icon:Bell},
     {label:'スケジュール', utt:'スケジュールを見せて', Icon:Calendar},
     {label:'AIに質問',    utt:'何でも聞いて',   Icon:Zap},
   ]
+
+  // Suppress unused warning
+  void isSpeechSupported
 
   return (
     <div style={{display:'flex',flexDirection:'column',height:'calc(100dvh - var(--header-height))',background:BG,position:'relative',overflow:'hidden'}}>
@@ -254,10 +229,9 @@ function AssistantContent() {
         {/* ── Center: JARVIS HUD ── */}
         <main style={{display:'flex',flex:1,flexDirection:'column',overflow:'hidden',padding:'4px 0 4px'}}>
 
-          {/* HUD — fills available space, click = toggle */}
-          <JarvisHUD mode={mode} isConnecting={isConn} onClick={toggleSession} isSession={isSession}/>
+          <JarvisHUD mode={mode} isConnecting={isConn} onClick={toggleSession}/>
 
-          {/* Tap label — 1行 */}
+          {/* Tap label */}
           <div style={{textAlign:'center',flexShrink:0,padding:'3px 0 2px'}}>
             <span style={{color:isSession?GB:GDim,fontSize:10,fontFamily:'monospace',letterSpacing:'.12em'}}>
               {isSession
@@ -267,10 +241,9 @@ function AssistantContent() {
             {isErr && <span style={{color:'#FF5555',fontSize:9,fontFamily:'monospace',marginLeft:8}}>{errorMessage||'接続エラー'}</span>}
           </div>
 
-          {/* Bottom status bar — 単一行 (PHASE 21) */}
+          {/* Bottom status bar */}
           <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:18,
             padding:'4px 16px 3px',flexShrink:0}}>
-            {/* 接続状態 */}
             <div style={{display:'flex',alignItems:'center',gap:4}}>
               <div style={{width:5,height:5,borderRadius:'50%',
                 background:isReady?'#4ade80':isConn?'#FFB800':isErr?'#FF4444':GDim,
@@ -280,9 +253,7 @@ function AssistantContent() {
                 {isReady?'READY':isConn?'CONNECTING':isErr?'ERROR':'STANDBY'}
               </span>
             </div>
-            {/* sep */}
             <span style={{color:GBdr,fontSize:9}}>|</span>
-            {/* マイク */}
             <div style={{display:'flex',alignItems:'center',gap:4}}>
               <Mic style={{color:GDim,width:11,height:11}}/>
               <span style={{color:isSession?GD:GDim,fontSize:9,fontWeight:isSession?700:400,fontFamily:'monospace'}}>
@@ -290,69 +261,109 @@ function AssistantContent() {
               </span>
               <div style={{width:5,height:5,borderRadius:'50%',background:isSession?GD:'#555',boxShadow:isSession?`0 0 5px ${GD}`:'none'}}/>
             </div>
-            {/* Wave */}
             <Wave active={isActive||isSpeak} h={14}/>
-            {/* AIモデル */}
             <span style={{color:GB,fontSize:9,fontWeight:700,fontFamily:'monospace',letterSpacing:'.08em'}}>HIKARU AI</span>
           </div>
         </main>
 
         {/* ── Right Panel ── */}
         <aside className="jp-right">
-          <div style={{display:'flex',flexDirection:'column',gap:0,padding:'16px 16px 12px',flex:1}}>
+          <div style={{display:'flex',flexDirection:'column',padding:'16px 16px 12px',flex:1,gap:0}}>
 
-            {/* STATUS */}
+            {/* ── STATUS: current only ── */}
             <div style={{marginBottom:16}}>
               <div style={{color:GDim,fontSize:9,fontWeight:700,letterSpacing:'.22em',fontFamily:'monospace',marginBottom:10}}>
-                STATUS（ステータス）
+                STATUS
               </div>
-              {STATUS_ITEMS.map(item=>(
-                <SRow key={item.key} item={item} active={cfgKey===item.key}/>
-              ))}
-            </div>
-
-            {/* MODE */}
-            <div style={{marginBottom:16,padding:'12px 14px',borderRadius:12,
-              border:`1px solid ${GBdr}`,background:'rgba(255,215,0,.04)'}}>
-              <div style={{color:GDim,fontSize:9,fontWeight:700,letterSpacing:'.22em',fontFamily:'monospace',marginBottom:10}}>
-                MODE（モード）
-              </div>
-              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4}}>
-                <span style={{
-                  fontSize:17,fontWeight:800,color:cur.color,fontFamily:'monospace',letterSpacing:'.12em',
-                  textShadow:isSession?`0 0 12px ${cur.color}`:undefined,
+              <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',
+                borderRadius:12,border:`1px solid ${GBdr}`,background:'rgba(255,215,0,.04)'}}>
+                <div style={{
+                  width:10,height:10,borderRadius:'50%',flexShrink:0,
+                  background:cur.dot,
+                  boxShadow:`0 0 8px ${cur.dot},0 0 18px ${cur.dot}55`,
                   transition:'all .35s',
-                }}>
-                  {cur.label}
-                </span>
+                }}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{
+                    fontSize:13,fontWeight:700,color:cur.color,
+                    fontFamily:'monospace',letterSpacing:'.10em',
+                    textShadow:isSession?`0 0 10px ${cur.color}`:undefined,
+                    transition:'all .35s',
+                  }}>
+                    {cur.label}
+                  </div>
+                  <div style={{fontSize:10,color:'rgba(255,255,255,.55)',marginTop:1}}>{cur.sub}</div>
+                </div>
                 <Wave active={isActive||isSpeak} h={18}/>
               </div>
-              <div style={{color:'rgba(255,255,255,.50)',fontSize:11}}>{cur.sub}</div>
-              {voiceEngineMode==='realtime'&&(
+              {isReady && (
                 <button onClick={disconnectRealtime}
-                  style={{marginTop:10,fontSize:9,color:GDim,background:'none',
-                    border:`1px solid ${GBdr}`,cursor:'pointer',borderRadius:6,padding:'3px 8px',fontFamily:'monospace'}}>
+                  style={{marginTop:8,fontSize:9,color:GDim,background:'none',
+                    border:`1px solid ${GBdr}`,cursor:'pointer',borderRadius:6,
+                    padding:'3px 8px',fontFamily:'monospace',width:'100%'}}>
                   切断
                 </button>
               )}
             </div>
 
-            {/* QUICK ACTION */}
-            <div style={{marginBottom:16}}>
+            {/* ── CONVERSATION ── */}
+            <div style={{marginBottom:16,flex:'1 1 auto',overflow:'hidden',display:'flex',flexDirection:'column'}}>
               <div style={{color:GDim,fontSize:9,fontWeight:700,letterSpacing:'.22em',fontFamily:'monospace',marginBottom:10}}>
-                QUICK ACTION（クイックアクション）
+                CONVERSATION
               </div>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+              <div style={{
+                flex:1,overflow:'hidden',display:'flex',flexDirection:'column',gap:0,
+                maskImage:'linear-gradient(to bottom, transparent 0%, black 5%, black 95%, transparent 100%)',
+                WebkitMaskImage:'linear-gradient(to bottom, transparent 0%, black 5%, black 95%, transparent 100%)',
+              }}>
+                {recentMsgs.length === 0 ? (
+                  <div style={{color:'rgba(255,215,0,.28)',fontSize:10,fontStyle:'italic',paddingTop:4}}>
+                    まだ会話がありません
+                  </div>
+                ) : (
+                  recentMsgs.map((msg, i) => (
+                    <div key={i} style={{
+                      marginBottom:10,
+                      paddingBottom:8,
+                      borderBottom: i < recentMsgs.length - 1
+                        ? '1px solid rgba(255,215,0,0.07)' : 'none',
+                    }}>
+                      <div style={{
+                        fontSize:9,fontWeight:700,fontFamily:'monospace',
+                        letterSpacing:'.16em',
+                        color: msg.role==='user' ? GD : GB,
+                        marginBottom:3,
+                      }}>
+                        {msg.role==='user' ? 'YOU' : 'JARVIS'}
+                      </div>
+                      <div style={{
+                        fontSize:11,color:'rgba(255,255,255,.80)',lineHeight:1.45,
+                        overflow:'hidden',maxHeight:'4.35em',
+                      }}>
+                        {msg.text.length > 130 ? msg.text.slice(0, 128) + '…' : msg.text}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* ── QUICK ACTION ── */}
+            <div style={{marginBottom:14,flexShrink:0}}>
+              <div style={{color:GDim,fontSize:9,fontWeight:700,letterSpacing:'.22em',fontFamily:'monospace',marginBottom:8}}>
+                QUICK ACTION
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
                 {QUICK.map(({label,utt,Icon})=>(
                   <button key={label} onClick={()=>handleUtterance(utt)}
                     disabled={isActive||isProc}
                     className="jqbtn"
                     style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
-                      gap:6,padding:'12px 6px',borderRadius:12,
+                      gap:5,padding:'10px 4px',borderRadius:10,
                       border:`1px solid ${GBdr}`,background:'rgba(255,215,0,.04)',
                       color:'rgba(255,255,255,.65)',cursor:'pointer',fontSize:10,
                       opacity:isActive||isProc?.4:1,transition:'background .18s'}}>
-                    <Icon style={{color:GDim,width:20,height:20}}/>
+                    <Icon style={{color:GDim,width:18,height:18}}/>
                     <span style={{lineHeight:1.3,textAlign:'center'}}>{label}</span>
                   </button>
                 ))}
@@ -361,10 +372,10 @@ function AssistantContent() {
 
             {/* Settings */}
             <button onClick={()=>setShowSettings(true)}
-              style={{display:'flex',alignItems:'center',justifyContent:'center',gap:6,padding:'10px 0',
+              style={{display:'flex',alignItems:'center',justifyContent:'center',gap:6,padding:'9px 0',
                 borderRadius:10,border:`1px solid ${GBdr}`,background:'rgba(255,215,0,.04)',
                 color:GDim,cursor:'pointer',fontSize:10,fontFamily:'monospace',
-                letterSpacing:'.14em',marginTop:'auto',transition:'background .18s'}}>
+                letterSpacing:'.14em',flexShrink:0,transition:'background .18s'}}>
               <Settings style={{width:13,height:13}}/>音声設定
             </button>
           </div>
