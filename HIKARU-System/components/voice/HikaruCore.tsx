@@ -4,404 +4,423 @@ import * as React from 'react'
 import type { VoiceMode } from '@/lib/voice/state/types'
 
 // ============================================================
-// HikaruCore — JARVIS型AIコアアニメーション
-// CSS/SVGのみ使用。Three.js/Canvas不使用。
-// VoiceModeに応じてアニメーション速度・輝度を変化。
-// isConnecting: voiceEngineMode === 'realtime-connecting' 時に渡す。
+// HikaruCore — JARVIS HUD (参考画像準拠)
+// SVGのみ使用。Canvas/Three.js不使用。
+// 8〜10層リング + ネオンゴールド発光 + センターテキスト
 // ============================================================
 
 interface HikaruCoreProps {
   mode:          VoiceMode
-  size?:         number   // px (default: 240)
-  isConnecting?: boolean  // connecting state overlay
+  size?:         number
+  isConnecting?: boolean
 }
 
-const COLORS = {
-  gold:         'oklch(0.73 0.12 78)',
-  goldBright:   'oklch(0.88 0.13 78)',
-  goldDark:     'oklch(0.52 0.10 75)',
-  goldFaint:    'oklch(0.73 0.12 78 / 0.35)',
-  amber:        'oklch(0.65 0.18 55)',
-  amberBright:  'oklch(0.80 0.18 55)',
-  error:        'oklch(0.62 0.24 22)',
-  errorFaint:   'oklch(0.62 0.24 22 / 0.40)',
+// ── カラー定義 ──────────────────────────────────────────────
+const C = {
+  gold:       '#FFD700',
+  goldBright: '#FFE878',
+  goldSoft:   '#FFCC33',
+  goldDim:    '#C8941A',
+  goldFaint:  'rgba(255,200,0,0.18)',
+  amber:      '#FFB800',
+  amberDim:   '#CC8800',
+  error:      '#FF4422',
+  errorDim:   'rgba(255,60,20,0.35)',
+  dark:       '#050505',
 } as const
 
-interface ModeConfig {
-  coreGlow:        string
-  ringADuration:   string
-  ringBDuration:   string
-  ringCDuration:   string
-  pulseDuration:   string
-  coreBrightness:  string
-  particleOpacity: string
+// ── State設定 ────────────────────────────────────────────────
+interface Cfg {
+  ringSpeed:       [string, string, string, string]  // outer→inner 4層速度
+  pulseDur:        string
+  glowColor:       string
+  glowStrong:      string
+  particleOpa:     number
+  ringOpa:         [number, number, number, number]
+  innerBright:     boolean
+  scannerOn:       boolean
+  waveActive:      boolean
+  connectingArc:   boolean
 }
 
-const MODE_CONFIG: Record<VoiceMode, ModeConfig> = {
+const CFGS: Record<string, Cfg> = {
   idle: {
-    coreGlow:        `0 0 40px ${COLORS.goldDark}, 0 0 80px ${COLORS.goldFaint}`,
-    ringADuration:   '8s',
-    ringBDuration:   '12s',
-    ringCDuration:   '20s',
-    pulseDuration:   '3s',
-    coreBrightness:  '1',
-    particleOpacity: '0.5',
+    ringSpeed:     ['35s', '28s', '22s', '18s'],
+    pulseDur:      '3.5s',
+    glowColor:     'rgba(255,180,0,0.15)',
+    glowStrong:    'rgba(255,200,0,0.08)',
+    particleOpa:   0.35,
+    ringOpa:       [0.35, 0.45, 0.50, 0.60],
+    innerBright:   false,
+    scannerOn:     false,
+    waveActive:    false,
+    connectingArc: false,
   },
   listening: {
-    coreGlow:        `0 0 60px ${COLORS.amber}, 0 0 120px ${COLORS.amberBright}, 0 0 200px ${COLORS.goldFaint}`,
-    ringADuration:   '2.5s',
-    ringBDuration:   '3.5s',
-    ringCDuration:   '8s',
-    pulseDuration:   '0.8s',
-    coreBrightness:  '1.4',
-    particleOpacity: '0.9',
+    ringSpeed:     ['12s', '9s', '6s', '4s'],
+    pulseDur:      '1.0s',
+    glowColor:     'rgba(255,190,0,0.40)',
+    glowStrong:    'rgba(255,210,0,0.25)',
+    particleOpa:   0.85,
+    ringOpa:       [0.65, 0.75, 0.85, 1.0],
+    innerBright:   true,
+    scannerOn:     false,
+    waveActive:    true,
+    connectingArc: false,
   },
   processing: {
-    coreGlow:        `0 0 50px ${COLORS.goldBright}, 0 0 100px ${COLORS.gold}`,
-    ringADuration:   '1.5s',
-    ringBDuration:   '2s',
-    ringCDuration:   '4s',
-    pulseDuration:   '0.5s',
-    coreBrightness:  '1.6',
-    particleOpacity: '1',
+    ringSpeed:     ['8s', '6s', '4s', '2.5s'],
+    pulseDur:      '0.6s',
+    glowColor:     'rgba(255,200,0,0.35)',
+    glowStrong:    'rgba(255,215,0,0.20)',
+    particleOpa:   1.0,
+    ringOpa:       [0.70, 0.80, 0.90, 1.0],
+    innerBright:   true,
+    scannerOn:     true,
+    waveActive:    false,
+    connectingArc: false,
   },
   working: {
-    coreGlow:        `0 0 45px ${COLORS.gold}, 0 0 90px ${COLORS.goldDark}`,
-    ringADuration:   '1.2s',
-    ringBDuration:   '1.8s',
-    ringCDuration:   '3s',
-    pulseDuration:   '0.4s',
-    coreBrightness:  '1.5',
-    particleOpacity: '1',
+    ringSpeed:     ['6s', '5s', '3s', '2s'],
+    pulseDur:      '0.5s',
+    glowColor:     'rgba(255,200,0,0.38)',
+    glowStrong:    'rgba(255,210,0,0.22)',
+    particleOpa:   1.0,
+    ringOpa:       [0.70, 0.80, 0.90, 1.0],
+    innerBright:   true,
+    scannerOn:     true,
+    waveActive:    false,
+    connectingArc: false,
   },
   speaking: {
-    coreGlow:        `0 0 55px ${COLORS.goldBright}, 0 0 110px ${COLORS.goldBright}`,
-    ringADuration:   '3s',
-    ringBDuration:   '4s',
-    ringCDuration:   '10s',
-    pulseDuration:   '1.2s',
-    coreBrightness:  '1.3',
-    particleOpacity: '0.8',
+    ringSpeed:     ['10s', '8s', '5s', '3.5s'],
+    pulseDur:      '0.9s',
+    glowColor:     'rgba(255,200,0,0.50)',
+    glowStrong:    'rgba(255,220,0,0.32)',
+    particleOpa:   0.95,
+    ringOpa:       [0.70, 0.85, 0.95, 1.0],
+    innerBright:   true,
+    scannerOn:     false,
+    waveActive:    true,
+    connectingArc: false,
   },
   error: {
-    coreGlow:        `0 0 50px ${COLORS.error}, 0 0 100px ${COLORS.errorFaint}`,
-    ringADuration:   '5s',
-    ringBDuration:   '7s',
-    ringCDuration:   '14s',
-    pulseDuration:   '0.4s',
-    coreBrightness:  '1',
-    particleOpacity: '0.6',
+    ringSpeed:     ['20s', '16s', '12s', '8s'],
+    pulseDur:      '0.7s',
+    glowColor:     'rgba(255,50,20,0.30)',
+    glowStrong:    'rgba(255,60,30,0.18)',
+    particleOpa:   0.50,
+    ringOpa:       [0.45, 0.55, 0.65, 0.80],
+    innerBright:   false,
+    scannerOn:     false,
+    waveActive:    false,
+    connectingArc: false,
+  },
+  connecting: {
+    ringSpeed:     ['15s', '12s', '8s', '5s'],
+    pulseDur:      '1.4s',
+    glowColor:     'rgba(255,170,0,0.25)',
+    glowStrong:    'rgba(255,185,0,0.12)',
+    particleOpa:   0.50,
+    ringOpa:       [0.40, 0.50, 0.60, 0.70],
+    innerBright:   false,
+    scannerOn:     false,
+    waveActive:    false,
+    connectingArc: true,
   },
 }
 
-// センターテキスト（HUD内に表示）
-const MODE_LABELS: Record<VoiceMode, { main: string; sub: string }> = {
-  idle:       { main: 'JARVIS', sub: 'STANDBY' },
-  listening:  { main: 'LISTEN', sub: '聞いています' },
-  processing: { main: 'THINK',  sub: '考えています' },
-  working:    { main: 'WORK',   sub: '処理中' },
-  speaking:   { main: 'SPEAK',  sub: '応答中' },
-  error:      { main: 'ERROR',  sub: 'エラー' },
+// ── テキスト ─────────────────────────────────────────────────
+const LABELS: Record<string, { main: string; sub: string }> = {
+  idle:       { main: 'JARVIS',   sub: 'STANDBY' },
+  listening:  { main: 'LISTEN',   sub: '聞いています' },
+  processing: { main: 'THINK',    sub: '考えています' },
+  working:    { main: 'PROCESS',  sub: '処理中' },
+  speaking:   { main: 'SPEAK',    sub: '応答しています' },
+  error:      { main: 'ERROR',    sub: 'エラー' },
+  connecting: { main: 'LINK',     sub: '接続中...' },
 }
 
-// 小粒子の位置（固定 seed）
-const PARTICLES = [
-  { angle: 15,  r: 0.88, delay: '0s'    },
-  { angle: 72,  r: 0.84, delay: '0.4s'  },
-  { angle: 135, r: 0.90, delay: '0.8s'  },
-  { angle: 195, r: 0.86, delay: '1.2s'  },
-  { angle: 252, r: 0.92, delay: '0.2s'  },
-  { angle: 315, r: 0.82, delay: '1.6s'  },
-  { angle: 45,  r: 0.78, delay: '0.6s'  },
-  { angle: 160, r: 0.94, delay: '1.0s'  },
-  { angle: 280, r: 0.80, delay: '1.4s'  },
-  { angle: 340, r: 0.88, delay: '0.3s'  },
+// ── パーティクル配置（固定seed）────────────────────────────
+const DOTS = [
+  {a:8,  rr:0.96}, {a:28, rr:0.93}, {a:55, rr:0.97},
+  {a:80, rr:0.94}, {a:108,rr:0.96}, {a:132,rr:0.92},
+  {a:158,rr:0.97}, {a:178,rr:0.94}, {a:205,rr:0.96},
+  {a:228,rr:0.93}, {a:255,rr:0.97}, {a:278,rr:0.94},
+  {a:305,rr:0.96}, {a:328,rr:0.92}, {a:352,rr:0.97},
+  {a:42, rr:0.98}, {a:142,rr:0.98}, {a:242,rr:0.98},
 ]
 
-// tick mark 角度（24分割）
-const TICKS = Array.from({ length: 24 }, (_, i) => ({
-  angle:   (i * 15 * Math.PI) / 180,
-  isMajor: i % 6 === 0,
-}))
+// ── ウェーブバー ──────────────────────────────────────────────
+const WAVE_H = [0.35, 0.60, 0.85, 1.0, 0.70, 1.0, 0.85, 0.55, 0.35]
 
-export function HikaruCore({ mode, size = 240, isConnecting = false }: HikaruCoreProps) {
-  const cfg       = MODE_CONFIG[mode]
-  const isError   = mode === 'error'
-  const coreColor = isError ? COLORS.error  : COLORS.goldDark
-  const ringColor = isError ? COLORS.error  : isConnecting ? COLORS.amber : COLORS.gold
-
-  const r = size / 2
+export function HikaruCore({ mode, size = 280, isConnecting = false }: HikaruCoreProps) {
+  const cfgKey    = isConnecting ? 'connecting' : mode
+  const cfg       = CFGS[cfgKey] ?? CFGS.idle
+  const label     = LABELS[cfgKey] ?? LABELS.idle
+  const isErr     = mode === 'error' && !isConnecting
+  const r         = size / 2
 
   const prefersReduced = React.useRef(
-    typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    typeof window !== 'undefined'
+      ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      : false
   )
+  const pr = prefersReduced.current
 
-  // prefers-reduced-motion: 高速回転を停止し、pulseのみ
-  const effectiveRingA = prefersReduced.current ? '20s' : cfg.ringADuration
-  const effectiveRingB = prefersReduced.current ? '30s' : cfg.ringBDuration
-  const effectiveRingC = prefersReduced.current ? '50s' : cfg.ringCDuration
+  const spd = (s: string) => pr ? `${parseFloat(s) * 4}s` : s
+  const [sA, sB, sC, sD] = cfg.ringSpeed
+  const [oA, oB, oC, oD] = cfg.ringOpa
 
-  const centerLabel = isConnecting
-    ? { main: 'LINK', sub: '接続中...' }
-    : MODE_LABELS[mode]
+  // リング色
+  const rC    = isErr ? C.error  : C.gold
+  const rCB   = isErr ? C.error  : C.goldBright
+  const rCSoft = isErr ? C.errorDim : C.goldSoft
 
-  const textColor    = isConnecting ? COLORS.amber : isError ? COLORS.error : COLORS.goldBright
-  const textColorSub = isConnecting ? COLORS.amber : isError ? COLORS.error : COLORS.gold
+  // テキスト色
+  const tMain = isErr ? C.error : C.goldBright
+  const tSub  = isErr ? C.error : C.goldSoft
 
-  const mainFontSize = Math.max(9,  size * 0.048)
-  const subFontSize  = Math.max(6,  size * 0.030)
+  // グロー
+  const glowBox  = isErr
+    ? `0 0 ${size*0.12}px rgba(255,50,20,.55), 0 0 ${size*0.22}px rgba(255,30,10,.30), 0 0 ${size*0.35}px rgba(200,20,0,.12)`
+    : isConnecting
+    ? `0 0 ${size*0.10}px rgba(255,180,0,.40), 0 0 ${size*0.20}px rgba(255,160,0,.22), 0 0 ${size*0.32}px rgba(255,140,0,.10)`
+    : `0 0 ${size*0.12}px rgba(255,200,0,.${cfg.innerBright?'60':'30'}), 0 0 ${size*0.24}px rgba(255,180,0,.${cfg.innerBright?'35':'18'}), 0 0 ${size*0.40}px rgba(255,150,0,.${cfg.innerBright?'18':'08'})`
 
-  const showScanner = !prefersReduced.current && (mode === 'processing' || mode === 'working')
+  // tick mark 24本
+  const TICKS = Array.from({length:36},(_,i)=>({ a:(i*10*Math.PI)/180, major: i%6===0 }))
+
+  // 主テキスト・サブテキストのフォントサイズ
+  const fMain = Math.max(10, size * 0.082)
+  const fSub  = Math.max(7,  size * 0.042)
+
+  // waveform for SVG (listening / speaking)
+  const waveX0 = r - size * 0.18
+  const waveBarW = (size * 0.36) / (WAVE_H.length * 2 - 1)
+  const waveMaxH = size * 0.06
 
   return (
-    <div
-      style={{ width: size, height: size, position: 'relative', flexShrink: 0 }}
-      role="img"
-      aria-label={`HIKARU AI Core - ${isConnecting ? 'connecting' : mode}`}
-    >
+    <div style={{ position:'relative', width:size, height:size, flexShrink:0 }}
+      role="img" aria-label={`JARVIS - ${cfgKey}`}>
+
+      {/* ── keyframes ── */}
       <style>{`
-        @keyframes hk-ring-cw   { from { transform: rotate(0deg);    } to { transform: rotate(360deg);   } }
-        @keyframes hk-ring-ccw  { from { transform: rotate(0deg);    } to { transform: rotate(-360deg);  } }
-        @keyframes hk-pulse     { 0%,100% { opacity: 0.6; transform: scale(0.96); } 50% { opacity: 1; transform: scale(1.04); } }
-        @keyframes hk-glow      { 0%,100% { opacity: 0.7; } 50% { opacity: 1; } }
-        @keyframes hk-particle  { 0%,100% { opacity: 0; transform: scale(0.5); } 50% { opacity: 1; transform: scale(1); } }
-        @keyframes hk-error     { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
-        @keyframes hk-scanner   { from { transform: rotate(0deg); }  to { transform: rotate(360deg); } }
-        @keyframes hk-connecting-arc { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
-        @media (prefers-reduced-motion: reduce) {
-          .hk-wave-bar { animation: none !important; transform: scaleY(0.5) !important; }
+        @keyframes hk-cw   { to { transform:rotate(360deg); } }
+        @keyframes hk-ccw  { to { transform:rotate(-360deg); } }
+        @keyframes hk-pulse{ 0%,100%{opacity:.55;transform:scale(.97)} 50%{opacity:1;transform:scale(1.03)} }
+        @keyframes hk-glow { 0%,100%{opacity:.65} 50%{opacity:1} }
+        @keyframes hk-dot  { 0%,100%{opacity:.1;transform:scale(.5)} 50%{opacity:1;transform:scale(1.1)} }
+        @keyframes hk-scan { to { transform:rotate(360deg); } }
+        @keyframes hk-arc  { 0%,100%{opacity:.25;stroke-dashoffset:0} 50%{opacity:.9;stroke-dashoffset:-20} }
+        @keyframes hk-wave { 0%{transform:scaleY(.2)} 100%{transform:scaleY(1)} }
+        @keyframes hk-err  { 0%,100%{opacity:1} 50%{opacity:.25} }
+        @keyframes hk-tri  { 0%,100%{opacity:.4} 50%{opacity:1} }
+        @media(prefers-reduced-motion:reduce){
+          [class*="hk-"]{animation-duration:40s!important}
         }
       `}</style>
 
-      <svg
-        width={size}
-        height={size}
-        viewBox={`0 0 ${size} ${size}`}
-        style={{ overflow: 'visible' }}
-      >
-        {/* ── SVG radial gradient for core ── */}
+      {/* ── 背景radial ambient glow ── */}
+      <div style={{
+        position:'absolute', inset:'-30%', borderRadius:'50%',
+        background: `radial-gradient(ellipse at center, ${cfg.glowColor} 0%, ${cfg.glowStrong} 35%, transparent 70%)`,
+        pointerEvents:'none',
+        animation:`hk-glow ${cfg.pulseDur} ease-in-out infinite`,
+      }}/>
+
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{overflow:'visible', position:'relative', zIndex:1}}>
         <defs>
-          <radialGradient id={`hkCoreGrad-${size}`} cx="40%" cy="35%" r="60%">
-            <stop offset="0%"   stopColor={COLORS.goldBright} />
-            <stop offset="60%"  stopColor={coreColor}          />
-            <stop offset="100%" stopColor="oklch(0.08 0.005 260)" />
+          {/* inner core gradient */}
+          <radialGradient id={`hk-core-${size}`} cx="50%" cy="45%" r="55%">
+            <stop offset="0%"   stopColor={isErr ? '#1a0000' : '#0a0800'} />
+            <stop offset="60%"  stopColor={isErr ? '#0d0000' : '#060500'} />
+            <stop offset="100%" stopColor="#020201" />
           </radialGradient>
-          <radialGradient id={`hkGlowGrad-${size}`} cx="50%" cy="50%" r="50%">
-            <stop offset="0%"   stopColor={ringColor} stopOpacity="0.3" />
-            <stop offset="100%" stopColor={ringColor} stopOpacity="0" />
+          {/* inner glow ring gradient */}
+          <radialGradient id={`hk-glow-${size}`} cx="50%" cy="50%" r="50%">
+            <stop offset="0%"   stopColor={rCB} stopOpacity={cfg.innerBright ? 0.30 : 0.10} />
+            <stop offset="100%" stopColor={rC}  stopOpacity="0" />
           </radialGradient>
         </defs>
 
-        {/* ── Tick marks（外周 HUD メモリ）── */}
-        {TICKS.map(({ angle, isMajor }, i) => {
-          const r1 = r * (isMajor ? 0.875 : 0.912)
-          const r2 = r * 0.952
-          return (
-            <line
-              key={i}
-              x1={r + Math.cos(angle) * r1}
-              y1={r + Math.sin(angle) * r1}
-              x2={r + Math.cos(angle) * r2}
-              y2={r + Math.sin(angle) * r2}
-              stroke={ringColor}
-              strokeWidth={isMajor ? 1.2 : 0.5}
-              opacity={isMajor ? 0.45 : 0.20}
-            />
-          )
+        {/* ── Layer 1: 最外周 radar thin ring ── */}
+        <g style={{transformOrigin:`${r}px ${r}px`, animation:`hk-cw ${spd(sA)} linear infinite`}}>
+          <circle cx={r} cy={r} r={r*0.970} fill="none" stroke={rCSoft} strokeWidth="0.4" strokeDasharray="2 8" opacity={oA*0.6}/>
+        </g>
+
+        {/* ── Layer 2: tick marks ring（静的）── */}
+        {TICKS.map(({a, major},i)=>{
+          const ro=r*0.955, ri=r*(major?0.930:0.945)
+          return <line key={i}
+            x1={r+Math.cos(a)*ri} y1={r+Math.sin(a)*ri}
+            x2={r+Math.cos(a)*ro} y2={r+Math.sin(a)*ro}
+            stroke={rC} strokeWidth={major?1.2:0.5} opacity={major?oA*0.55:oA*0.22}/>
         })}
 
-        {/* ── Outer HUD ring（ゆっくり時計回り・ダッシュ）── */}
-        <g style={{
-          transformOrigin: `${r}px ${r}px`,
-          animation: `hk-ring-cw ${effectiveRingC} linear infinite`,
-        }}>
-          <circle
-            cx={r} cy={r} r={r * 0.94}
-            fill="none"
-            stroke={ringColor}
-            strokeWidth="0.5"
-            strokeDasharray="4 12"
-            opacity="0.35"
-          />
+        {/* ── Layer 3: segment outer ring ── */}
+        <g style={{transformOrigin:`${r}px ${r}px`, animation:`hk-ccw ${spd(sA)} linear infinite`}}>
+          <circle cx={r} cy={r} r={r*0.910} fill="none" stroke={rC} strokeWidth="0.8" strokeDasharray="22 6 5 6" opacity={oA}/>
         </g>
 
-        {/* ── Ring A（反時計回り・中速）── */}
-        <g style={{
-          transformOrigin: `${r}px ${r}px`,
-          animation: `hk-ring-ccw ${effectiveRingB} linear infinite`,
-        }}>
-          <circle
-            cx={r} cy={r} r={r * 0.78}
-            fill="none"
-            stroke={ringColor}
-            strokeWidth="1"
-            strokeDasharray="30 10 8 18"
-            opacity="0.55"
-          />
-          {/* 小三角マーカー */}
-          <polygon
-            points={`${r},${r * 0.215}  ${r - 4},${r * 0.23}  ${r + 4},${r * 0.23}`}
-            fill={ringColor}
-            opacity="0.8"
-          />
+        {/* ── Layer 4: broken arc ring ── */}
+        <g style={{transformOrigin:`${r}px ${r}px`, animation:`hk-cw ${spd(sB)} linear infinite`}}>
+          <circle cx={r} cy={r} r={r*0.865} fill="none" stroke={rCB} strokeWidth="1.2" strokeDasharray="55 12 8 12 30 12" opacity={oB}/>
+          {/* triangle marker */}
+          <polygon points={`${r},${r*0.12} ${r-3.5},${r*0.148} ${r+3.5},${r*0.148}`} fill={rCB} opacity={oB}/>
         </g>
 
-        {/* ── Ring B（時計回り・高速）── */}
-        <g style={{
-          transformOrigin: `${r}px ${r}px`,
-          animation: `hk-ring-cw ${effectiveRingA} linear infinite`,
-        }}>
-          <circle
-            cx={r} cy={r} r={r * 0.62}
-            fill="none"
-            stroke={isError ? COLORS.error : COLORS.goldBright}
-            strokeWidth="1.5"
-            strokeDasharray="18 6"
-            opacity="0.65"
-          />
+        {/* ── Layer 5: medium segmented ring ── */}
+        <g style={{transformOrigin:`${r}px ${r}px`, animation:`hk-ccw ${spd(sB)} linear infinite`}}>
+          <circle cx={r} cy={r} r={r*0.820} fill="none" stroke={rC} strokeWidth="1.5" strokeDasharray="18 5 6 5" opacity={oB}/>
         </g>
 
-        {/* ── Inner ring（静的）── */}
-        <circle
-          cx={r} cy={r} r={r * 0.46}
-          fill="none"
-          stroke={ringColor}
-          strokeWidth="0.5"
-          opacity="0.40"
-        />
-
-        {/* ── CONNECTING: 点滅するARC ── */}
-        {isConnecting && (
-          <circle
-            cx={r} cy={r} r={r * 0.55}
-            fill="none"
-            stroke={COLORS.amber}
-            strokeWidth="1"
-            strokeDasharray="40 20"
-            opacity="0.6"
-            style={{ animation: `hk-connecting-arc 1.2s ease-in-out infinite` }}
-          />
+        {/* ── CONNECTING: dashed orbit arc ── */}
+        {cfg.connectingArc && (
+          <circle cx={r} cy={r} r={r*0.76} fill="none" stroke={C.amber}
+            strokeWidth="1.5" strokeDasharray="30 15" opacity="0.7"
+            style={{animation:`hk-arc 1.4s ease-in-out infinite`, transformOrigin:`${r}px ${r}px`}}/>
         )}
 
+        {/* ── Layer 6: inner segmented ring ── */}
+        <g style={{transformOrigin:`${r}px ${r}px`, animation:`hk-cw ${spd(sC)} linear infinite`}}>
+          <circle cx={r} cy={r} r={r*0.758} fill="none" stroke={rCB} strokeWidth="1.8" strokeDasharray="40 8 10 8 20 8" opacity={oC}/>
+        </g>
+
+        {/* ── Layer 7: counter ring ── */}
+        <g style={{transformOrigin:`${r}px ${r}px`, animation:`hk-ccw ${spd(sC)} linear infinite`}}>
+          <circle cx={r} cy={r} r={r*0.710} fill="none" stroke={rC} strokeWidth="1.0" strokeDasharray="12 4" opacity={oC*0.7}/>
+        </g>
+
+        {/* ── Layer 8: bright inner solid ring ── */}
+        <circle cx={r} cy={r} r={r*0.660} fill="none"
+          stroke={cfg.innerBright ? rCB : rCSoft}
+          strokeWidth={cfg.innerBright ? 3.0 : 1.5}
+          opacity={oD}
+          style={{
+            filter: cfg.innerBright ? `drop-shadow(0 0 ${size*0.018}px ${rCB}) drop-shadow(0 0 ${size*0.008}px ${C.goldBright})` : 'none',
+            animation:`hk-glow ${cfg.pulseDur} ease-in-out infinite`,
+          }}/>
+
+        {/* ── Layer 9: glow ring (soft) ── */}
+        <circle cx={r} cy={r} r={r*0.610} fill="none"
+          stroke={isErr ? C.error : rCB}
+          strokeWidth={cfg.innerBright ? 6 : 3}
+          opacity={cfg.innerBright ? 0.18 : 0.07}
+          style={{animation:`hk-pulse ${cfg.pulseDur} ease-in-out infinite`}}/>
+
+        {/* ── Layer 10: HUD radial lines (6本) ── */}
+        {[0,60,120,180,240,300].map((deg,i)=>{
+          const rad=(deg*Math.PI)/180
+          return <line key={i}
+            x1={r+Math.cos(rad)*r*0.60} y1={r+Math.sin(rad)*r*0.60}
+            x2={r+Math.cos(rad)*r*0.42} y2={r+Math.sin(rad)*r*0.42}
+            stroke={rC} strokeWidth="0.5" opacity={oC*0.40}/>
+        })}
+
+        {/* ── Core background ── */}
+        <circle cx={r} cy={r} r={r*0.390} fill={`url(#hk-core-${size})`}/>
+
+        {/* ── Core inner glow fill ── */}
+        <circle cx={r} cy={r} r={r*0.370} fill={`url(#hk-glow-${size})`}
+          style={{animation:`hk-pulse ${cfg.pulseDur} ease-in-out infinite`}}/>
+
         {/* ── THINKING / WORKING: Scanner line ── */}
-        {showScanner && (
-          <g style={{
-            transformOrigin: `${r}px ${r}px`,
-            animation: `hk-scanner 1.8s linear infinite`,
-          }}>
-            <line
-              x1={r}
-              y1={r}
-              x2={r}
-              y2={r * 0.38}
-              stroke={ringColor}
-              strokeWidth="0.8"
-              opacity="0.55"
-            />
-            <circle cx={r} cy={r * 0.42} r="2.5" fill={ringColor} opacity="0.85" />
+        {cfg.scannerOn && !pr && (
+          <g style={{transformOrigin:`${r}px ${r}px`, animation:`hk-scan 1.8s linear infinite`}}>
+            <line x1={r} y1={r} x2={r} y2={r*0.28} stroke={rCB} strokeWidth="0.7" opacity="0.65"/>
+            <circle cx={r} cy={r*0.30} r="2.2" fill={rCB} opacity="0.9"/>
           </g>
         )}
 
-        {/* ── 粒子 ── */}
-        {PARTICLES.map((p, i) => {
-          const rad = (p.angle * Math.PI) / 180
-          const px  = r + Math.cos(rad) * r * p.r
-          const py  = r + Math.sin(rad) * r * p.r
+        {/* ── Particles ── */}
+        {DOTS.map(({a,rr},i)=>{
+          const rad=(a*Math.PI)/180
+          const delay=`${(i*0.25)%2.8}s`
+          return <circle key={i}
+            cx={r+Math.cos(rad)*r*rr} cy={r+Math.sin(rad)*r*rr}
+            r={i%3===0 ? 2.2 : 1.4}
+            fill={rC}
+            style={{
+              animation:`hk-dot ${cfg.pulseDur} ease-in-out ${delay} infinite`,
+              opacity: cfg.particleOpa,
+            }}/>
+        })}
+
+        {/* ── ERROR triangle icon ── */}
+        {isErr && (
+          <text x={r} y={r+size*0.10} textAnchor="middle" fill={C.error}
+            fontSize={size*0.075} fontFamily="monospace"
+            style={{animation:`hk-tri ${cfg.pulseDur} ease-in-out infinite`, userSelect:'none'}}>
+            ⚠
+          </text>
+        )}
+
+        {/* ── Waveform (LISTENING / SPEAKING) ── */}
+        {cfg.waveActive && !pr && WAVE_H.map((h,i)=>{
+          const x = waveX0 + i * waveBarW * 2
+          const barH = h * waveMaxH
+          const y1 = r + barH / 2
           return (
-            <circle
-              key={i}
-              cx={px} cy={py} r="1.5"
-              fill={ringColor}
+            <rect key={i}
+              x={x} y={y1 - barH}
+              width={Math.max(1.5, waveBarW - 1)} height={barH}
+              rx="1" fill={rCB} opacity="0.85"
               style={{
-                animation: `hk-particle ${cfg.pulseDuration} ease-in-out infinite`,
-                animationDelay: p.delay,
-                opacity: parseFloat(cfg.particleOpacity),
-              }}
-            />
+                transformOrigin:`${x}px ${y1}px`,
+                animation:`hk-wave ${0.4 + i * 0.08}s ease-in-out ${i * 0.06}s infinite alternate`,
+              }}/>
           )
         })}
 
-        {/* ── AI Core グロー（外側の光）── */}
-        <circle
-          cx={r} cy={r} r={r * 0.30}
-          fill="none"
-          stroke={isError ? COLORS.error : COLORS.goldBright}
-          strokeWidth="20"
-          opacity="0.08"
-          style={{ animation: `hk-glow ${cfg.pulseDuration} ease-in-out infinite` }}
-        />
-
-        {/* ── Core 本体 ── */}
-        <circle
-          cx={r} cy={r} r={r * 0.28}
-          fill={`url(#hkCoreGrad-${size})`}
+        {/* ── Center text: main label ── */}
+        <text x={r} y={r - (isErr ? fMain * 1.2 : fSub * 0.5)}
+          textAnchor="middle" dominantBaseline="middle"
+          fill={tMain} fontSize={fMain}
+          fontWeight="900" letterSpacing="0.14em"
+          fontFamily="'Courier New',Courier,monospace"
+          opacity="0.98"
           style={{
-            animation: isError
-              ? `hk-error ${cfg.pulseDuration} ease-in-out infinite`
-              : `hk-pulse ${cfg.pulseDuration} ease-in-out infinite`,
-            filter: `brightness(${cfg.coreBrightness}) drop-shadow(${cfg.coreGlow})`,
-          }}
-        />
-
-        {/* ── Core inner highlight ── */}
-        <circle
-          cx={r * 0.88} cy={r * 0.82} r={r * 0.07}
-          fill="white"
-          opacity="0.25"
-        />
-
-        {/* ── Radial HUD lines ── */}
-        {[0, 60, 120, 180, 240, 300].map((deg, i) => {
-          const rad = (deg * Math.PI) / 180
-          const x1  = r + Math.cos(rad) * r * 0.50
-          const y1  = r + Math.sin(rad) * r * 0.50
-          const x2  = r + Math.cos(rad) * r * 0.70
-          const y2  = r + Math.sin(rad) * r * 0.70
-          return (
-            <line key={i} x1={x1} y1={y1} x2={x2} y2={y2}
-              stroke={ringColor} strokeWidth="0.5" opacity="0.30" />
-          )
-        })}
-
-        {/* ── Center Status Text ── */}
-        <text
-          x={r}
-          y={r - mainFontSize * 0.4}
-          textAnchor="middle"
-          dominantBaseline="middle"
-          fill={textColor}
-          fontSize={mainFontSize}
-          fontWeight="bold"
-          letterSpacing="0.10em"
-          fontFamily="'Courier New', Courier, monospace"
-          opacity="0.95"
-          style={{ userSelect: 'none', pointerEvents: 'none' }}
-        >
-          {centerLabel.main}
+            filter: cfg.innerBright
+              ? `drop-shadow(0 0 ${fMain*0.4}px ${tMain})`
+              : 'none',
+            userSelect:'none',
+            animation: isErr ? `hk-err ${cfg.pulseDur} ease-in-out infinite` : undefined,
+          }}>
+          {label.main}
         </text>
-        <text
-          x={r}
-          y={r + mainFontSize * 1.05}
-          textAnchor="middle"
-          dominantBaseline="middle"
-          fill={textColorSub}
-          fontSize={subFontSize}
-          letterSpacing="0.06em"
-          fontFamily="'Courier New', Courier, monospace"
-          opacity="0.60"
-          style={{ userSelect: 'none', pointerEvents: 'none' }}
-        >
-          {centerLabel.sub}
-        </text>
+
+        {/* ── Center text: sub label ── */}
+        {!isErr && (
+          <text x={r} y={r + fMain * 0.72}
+            textAnchor="middle" dominantBaseline="middle"
+            fill={tSub} fontSize={fSub}
+            letterSpacing="0.10em"
+            fontFamily="'Courier New',Courier,monospace"
+            opacity="0.65"
+            style={{userSelect:'none'}}>
+            {label.sub}
+          </text>
+        )}
+
+        {/* ── IDLE dots below sub ── */}
+        {cfgKey === 'idle' && (
+          <text x={r} y={r + fMain * 0.72 + fSub * 1.5}
+            textAnchor="middle" fill={C.goldDim} fontSize={fSub * 0.8}
+            letterSpacing="0.20em" fontFamily="monospace" opacity="0.40"
+            style={{userSelect:'none'}}>
+            · · · · ·
+          </text>
+        )}
       </svg>
 
-      {/* CSS glow overlay */}
+      {/* ── CSS box-shadow glow overlay ── */}
       <div style={{
-        position: 'absolute', inset: 0, borderRadius: '50%',
-        boxShadow: cfg.coreGlow,
-        pointerEvents: 'none',
-        animation: `hk-glow ${cfg.pulseDuration} ease-in-out infinite`,
-      }} />
+        position:'absolute', inset:0, borderRadius:'50%',
+        boxShadow: glowBox,
+        pointerEvents:'none', zIndex:2,
+        animation:`hk-glow ${cfg.pulseDur} ease-in-out infinite`,
+      }}/>
     </div>
   )
 }
