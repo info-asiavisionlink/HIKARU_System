@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import { useRouter }       from 'next/navigation'
-import { Mic, X, Settings, Volume2, Radio, MicOff } from 'lucide-react'
+import { Mic, X, Settings, Volume2, Radio, Home, Bell, Calendar, Zap } from 'lucide-react'
 import { HikaruCore }      from '@/components/voice/HikaruCore'
 import { useSystemJarvis } from '@/lib/voice/SystemVoiceContext'
 import { browserTTS }      from '@/lib/voice/tts/browser'
@@ -10,100 +10,93 @@ import { VOICE_ASSISTANT_NAME } from '@/lib/voice/config'
 import type { VoiceSettings, VoiceMode } from '@/lib/voice/state/types'
 
 // ============================================================
-// HIKARU AI Assistant — JARVIS HUD (参考画像準拠)
-// HUDを画面中央の主役として大きく表示。
+// HIKARU AI Assistant — 3D Holographic JARVIS HUD
+// useSystemJarvis() でVoice stateを取得しVisualへマッピングするのみ。
+// Voice Engine / Logic / API は一切変更しない。
 // ============================================================
 
-const GOLD        = '#FFD700'
-const GOLD_BRIGHT = '#FFE878'
-const GOLD_SOFT   = '#FFCC33'
-const GOLD_DIM    = 'rgba(255,200,60,0.45)'
-const GOLD_FAINT  = 'rgba(255,200,0,0.10)'
-const GOLD_BORDER = 'rgba(255,200,0,0.22)'
-const ERROR_COL   = '#FF4422'
-const BG_DARK     = '#030303'
+const GOLD = '#FFD700'
+const GOLD_B = '#FFE878'
+const GOLD_D = 'rgba(200,144,16,0.50)'
+const GOLD_DIM = 'rgba(200,144,16,0.22)'
+const GOLD_BDR = 'rgba(200,144,16,0.18)'
+const BG = '#020202'
 
-// ─── Waveform bar ────────────────────────────────────────────
-function WaveBar({ active, size = 'sm' }: { active: boolean; size?: 'sm' | 'md' }) {
-  const h = [0.35, 0.6, 0.85, 1.0, 0.75, 1.0, 0.85, 0.55, 0.35]
-  const maxH = size === 'md' ? 24 : 16
+// State-based primary color (for glow/indicators)
+const STATE_COLOR: Record<string, string> = {
+  idle:'#C89010', connecting:'#00AFFF', listening:'#FFD700',
+  processing:'#FFB800', working:'#C030D8', speaking:'#00E060', error:'#FF3030',
+}
+
+// ─── Waveform ────────────────────────────────────────────────
+function Wave({ active }: { active: boolean }) {
+  const h = [.28,.50,.72,.92,1,.95,.78,.96,1,.82]
   return (
-    <div className="flex items-end gap-[2px]" style={{ height: maxH, alignItems: 'center' }}>
-      <style>{`
-        @keyframes hk-wb { 0%{transform:scaleY(.15)} 100%{transform:scaleY(1)} }
-        @media(prefers-reduced-motion:reduce){.hk-wb{animation:none!important;transform:scaleY(.4)!important}}
-      `}</style>
-      {h.map((v, i) => (
-        <div key={i} className="hk-wb w-[3px] rounded-full"
-          style={{
-            background: GOLD_BRIGHT,
-            height: `${v * maxH}px`,
-            opacity: active ? 0.88 : 0.22,
-            animation: active ? `hk-wb ${0.45 + i * 0.08}s ease-in-out ${i * 0.06}s infinite alternate` : 'none',
-            transformOrigin: 'bottom',
-          }} />
+    <div className="flex items-end gap-[2px]" style={{ height:18 }}>
+      <style>{`@keyframes jw{0%{transform:scaleY(.12)}100%{transform:scaleY(1)}}`}</style>
+      {h.map((v,i) => (
+        <div key={i} style={{
+          width:3, height:`${v*18}px`, borderRadius:2,
+          background: active ? GOLD_B : GOLD_D,
+          opacity: active ? .88 : .25,
+          animation: active ? `jw ${.40+i*.07}s ease-in-out ${i*.055}s infinite alternate` : 'none',
+          transformOrigin:'bottom',
+        }}/>
       ))}
     </div>
   )
 }
 
 // ─── Live clock ──────────────────────────────────────────────
-function LiveClock() {
-  const [t, setT] = React.useState('')
-  React.useEffect(() => {
-    const tick = () => setT(new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' }))
-    tick(); const id = setInterval(tick, 1000); return () => clearInterval(id)
-  }, [])
+function Clock() {
+  const [t,setT] = React.useState('')
+  React.useEffect(()=>{
+    const tick=()=>setT(new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit'}))
+    tick(); const id=setInterval(tick,1000); return()=>clearInterval(id)
+  },[])
   return <>{t}</>
 }
 
-// ─── Voice Settings Panel ───────────────────────────────────
-function VoiceSettingsPanel({ settings, onClose, onSave }: {
-  settings: VoiceSettings; onClose: () => void; onSave: (s: VoiceSettings) => void
-}) {
-  const [local, setLocal]   = React.useState<VoiceSettings>(settings)
-  const [voices, setVoices] = React.useState<SpeechSynthesisVoice[]>([])
-  React.useEffect(() => {
-    const load = () => { if (typeof window === 'undefined') return; setVoices(window.speechSynthesis.getVoices()) }
-    load(); window.speechSynthesis.addEventListener?.('voiceschanged', load)
-    return () => window.speechSynthesis.removeEventListener?.('voiceschanged', load)
-  }, [])
-  const jp = voices.filter(v => v.lang.startsWith('ja'))
-  const all = jp.length > 0 ? jp : voices
+// ─── Voice Settings Panel ────────────────────────────────────
+function VoiceSettingsPanel({ settings, onClose, onSave }:{settings:VoiceSettings;onClose:()=>void;onSave:(s:VoiceSettings)=>void}) {
+  const [local,setLocal] = React.useState<VoiceSettings>(settings)
+  const [voices,setVoices] = React.useState<SpeechSynthesisVoice[]>([])
+  React.useEffect(()=>{
+    const load=()=>{if(typeof window==='undefined')return;setVoices(window.speechSynthesis.getVoices())}
+    load();window.speechSynthesis.addEventListener?.('voiceschanged',load)
+    return()=>window.speechSynthesis.removeEventListener?.('voiceschanged',load)
+  },[])
+  const all = voices.filter(v=>v.lang.startsWith('ja')).length>0 ? voices.filter(v=>v.lang.startsWith('ja')) : voices
   return (
-    <div className="absolute inset-0 z-20 flex flex-col p-5 overflow-y-auto"
-      style={{ background: '#040404', border: `1px solid ${GOLD_BORDER}` }}>
-      <div className="flex items-center justify-between mb-5">
-        <p className="text-sm font-bold tracking-[0.18em] uppercase" style={{ color: GOLD_BRIGHT }}>VOICE SETTINGS</p>
-        <button onClick={onClose} style={{ color: GOLD_DIM }}><X className="h-4 w-4" /></button>
+    <div style={{position:'absolute',inset:0,zIndex:30,display:'flex',flexDirection:'column',padding:20,overflowY:'auto',background:'#040404',border:`1px solid ${GOLD_BDR}`}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:18}}>
+        <span style={{color:GOLD_B,fontSize:11,fontWeight:700,letterSpacing:'.18em',fontFamily:'monospace'}}>VOICE SETTINGS</span>
+        <button onClick={onClose} style={{color:GOLD_D,background:'none',border:'none',cursor:'pointer'}}><X style={{width:15,height:15}}/></button>
       </div>
-      <label className="text-[10px] tracking-[0.2em] uppercase mb-1.5 block" style={{ color: GOLD_DIM }}>音声</label>
-      <select value={local.voiceURI} onChange={e => setLocal(p => ({...p, voiceURI: e.target.value}))}
-        className="w-full rounded-lg px-3 py-2 text-sm mb-4"
-        style={{ background: GOLD_FAINT, border: `1px solid ${GOLD_BORDER}`, color: GOLD_BRIGHT }}>
+      <label style={{color:GOLD_D,fontSize:8,letterSpacing:'.2em',fontFamily:'monospace',marginBottom:6}}>音声</label>
+      <select value={local.voiceURI} onChange={e=>setLocal(p=>({...p,voiceURI:e.target.value}))}
+        style={{background:'rgba(255,200,0,.06)',border:`1px solid ${GOLD_BDR}`,color:GOLD_B,borderRadius:8,padding:'6px 8px',fontSize:12,marginBottom:14}}>
         <option value="">自動</option>
-        {all.map(v => <option key={v.voiceURI} value={v.voiceURI}>{v.name} ({v.lang})</option>)}
+        {all.map(v=><option key={v.voiceURI} value={v.voiceURI}>{v.name}</option>)}
       </select>
-      {(['rate','pitch','volume'] as const).map(key => (
-        <div key={key} className="mb-4">
-          <label className="text-[10px] tracking-[0.2em] uppercase mb-1.5 flex justify-between" style={{ color: GOLD_DIM }}>
-            <span>{{ rate:'速度', pitch:'ピッチ', volume:'音量' }[key]}</span>
-            <span style={{ color: GOLD_BRIGHT }}>{local[key].toFixed(1)}</span>
-          </label>
-          <input type="range" min={key==='pitch'?0:key==='volume'?0:0.5} max={key==='volume'?1.0:2.0} step={0.1}
-            value={local[key]} onChange={e => setLocal(p => ({...p, [key]: parseFloat(e.target.value)}))}
-            className="w-full" style={{ accentColor: GOLD }} />
+      {(['rate','pitch','volume'] as const).map(k=>(
+        <div key={k} style={{marginBottom:12}}>
+          <div style={{display:'flex',justifyContent:'space-between',color:GOLD_D,fontSize:8,letterSpacing:'.2em',fontFamily:'monospace',marginBottom:4}}>
+            <span>{{rate:'速度',pitch:'ピッチ',volume:'音量'}[k]}</span>
+            <span style={{color:GOLD_B}}>{local[k].toFixed(1)}</span>
+          </div>
+          <input type="range" min={k==='pitch'?0:k==='volume'?0:.5} max={k==='volume'?1:2} step={.1}
+            value={local[k]} onChange={e=>setLocal(p=>({...p,[k]:parseFloat(e.target.value)}))}
+            style={{width:'100%',accentColor:GOLD}}/>
         </div>
       ))}
-      <div className="flex gap-2 mt-2">
-        <button onClick={() => browserTTS.speak(`こんにちは。私は${VOICE_ASSISTANT_NAME}です。`, undefined, local)}
-          className="flex flex-1 items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold"
-          style={{ background: GOLD_FAINT, border: `1px solid ${GOLD_BORDER}`, color: GOLD_BRIGHT }}>
-          <Volume2 className="h-4 w-4" />試聴
+      <div style={{display:'flex',gap:8,marginTop:4}}>
+        <button onClick={()=>browserTTS.speak(`こんにちは。私は${VOICE_ASSISTANT_NAME}です。`,undefined,local)}
+          style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:6,padding:'8px 0',borderRadius:10,border:`1px solid ${GOLD_BDR}`,background:'none',color:GOLD_B,cursor:'pointer',fontSize:12}}>
+          <Volume2 style={{width:14,height:14}}/>試聴
         </button>
-        <button onClick={() => { onSave(local); onClose() }}
-          className="flex flex-1 items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold"
-          style={{ background: `rgba(255,200,0,0.18)`, border: `1px solid ${GOLD}`, color: GOLD_BRIGHT }}>
+        <button onClick={()=>{onSave(local);onClose()}}
+          style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:6,padding:'8px 0',borderRadius:10,border:`1px solid ${GOLD}`,background:'rgba(255,215,0,.12)',color:GOLD_B,cursor:'pointer',fontSize:12,fontWeight:700}}>
           保存
         </button>
       </div>
@@ -111,348 +104,257 @@ function VoiceSettingsPanel({ settings, onClose, onSave }: {
   )
 }
 
-// ─── HikaruCore sized ────────────────────────────────────────
-function HikaruCoreSized({ mode, isConnecting }: { mode: VoiceMode; isConnecting: boolean }) {
+// ─── Responsive HikaruCore ───────────────────────────────────
+function JarvisHUD({ mode, isConnecting }: { mode: VoiceMode; isConnecting: boolean }) {
   const ref = React.useRef<HTMLDivElement>(null)
-  const [sz, setSz] = React.useState(360)
-  React.useEffect(() => {
-    if (!ref.current) return
-    const ro = new ResizeObserver(([e]) => {
-      const s = Math.floor(Math.min(e.contentRect.width, e.contentRect.height))
-      setSz(s > 0 ? s : 360)
+  const [sz,setSz] = React.useState(280)
+  React.useEffect(()=>{
+    if(!ref.current)return
+    const ro=new ResizeObserver(([e])=>{
+      // HikaruCore total height = size*1.82, width = size*1.05
+      // We fit into a container — compute size from available width & height
+      const cw=e.contentRect.width, ch=e.contentRect.height
+      const byW = cw / 1.05
+      const byH = ch / 1.82
+      const s = Math.floor(Math.min(byW, byH, 460))
+      setSz(Math.max(s, 180))
     })
     ro.observe(ref.current)
-    return () => ro.disconnect()
-  }, [])
+    return()=>ro.disconnect()
+  },[])
   return (
-    <div ref={ref} style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <HikaruCore mode={mode} size={sz} isConnecting={isConnecting} />
+    <div ref={ref} style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',minHeight:0}}>
+      <HikaruCore mode={mode} size={sz} isConnecting={isConnecting}/>
     </div>
   )
 }
 
-// ─── Mic Button ─────────────────────────────────────────────
-function MicButton({ isSession, isProcessing, onClick }: {
-  isSession: boolean; isProcessing: boolean; onClick: () => void
-}) {
-  const [hover, setHover] = React.useState(false)
-  const glow = isSession
-    ? `0 0 14px rgba(255,200,0,.80), 0 0 30px rgba(255,180,0,.45), 0 0 55px rgba(255,150,0,.22)`
-    : hover
-    ? `0 0 10px rgba(255,200,0,.50), 0 0 22px rgba(255,180,0,.28)`
-    : `0 0 6px rgba(255,180,0,.20)`
+// ─── Mic Button ──────────────────────────────────────────────
+function MicBtn({ isOn, disabled, onClick }: { isOn:boolean; disabled:boolean; onClick:()=>void }) {
+  const [hov,setHov] = React.useState(false)
+  const col = isOn ? GOLD : '#886800'
   return (
-    <button
-      onClick={onClick}
-      disabled={isProcessing}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      aria-label={isSession ? 'JARVIS停止' : 'JARVIS起動'}
+    <button onClick={onClick} disabled={disabled}
+      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
+      aria-label={isOn?'JARVIS停止':'JARVIS起動'}
       style={{
-        width: 82, height: 82,
-        borderRadius: '50%',
-        border: `2px solid ${isSession ? GOLD : GOLD_SOFT}`,
-        background: isSession ? `rgba(255,200,0,0.14)` : `rgba(255,200,0,0.06)`,
-        boxShadow: glow,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        cursor: isProcessing ? 'not-allowed' : 'pointer',
-        opacity: isProcessing ? 0.5 : 1,
-        transform: hover && !isProcessing ? 'scale(1.04)' : 'scale(1)',
-        transition: 'transform .18s, box-shadow .18s, background .18s',
-        flexShrink: 0,
+        width:80,height:80,borderRadius:'50%',flexShrink:0,
+        border:`2px solid ${col}`,cursor:disabled?'not-allowed':'pointer',
+        background:isOn?'rgba(255,215,0,.14)':'rgba(180,120,0,.06)',
+        boxShadow:isOn
+          ?`0 0 16px rgba(255,215,0,.75),0 0 36px rgba(255,190,0,.40),0 0 65px rgba(255,160,0,.18)`
+          :hov?`0 0 12px rgba(200,140,0,.45),0 0 28px rgba(180,120,0,.22)`
+          :`0 0 6px rgba(160,110,0,.18)`,
+        display:'flex',alignItems:'center',justifyContent:'center',
+        opacity:disabled?.45:1,
+        transform:hov&&!disabled?'scale(1.05)':'scale(1)',
+        transition:'transform .18s,box-shadow .18s,background .18s',
       }}>
-      {isSession
-        ? <Radio  style={{ color: GOLD_BRIGHT, width: 34, height: 34 }} />
-        : <Mic    style={{ color: GOLD,        width: 34, height: 34 }} />
-      }
+      {isOn
+        ? <Radio style={{color:GOLD_B,width:34,height:34}}/>
+        : <Mic   style={{color:GOLD,width:34,height:34}}/>}
     </button>
   )
 }
 
-// ─── Connection status bar ───────────────────────────────────
-function ConnectionBar({ voiceEngineMode, isError }: { voiceEngineMode: string; isError: boolean }) {
-  const isReady      = voiceEngineMode === 'realtime'
-  const isConnecting = voiceEngineMode === 'realtime-connecting'
-  const dotColor     = isError ? ERROR_COL : isReady ? '#4ade80' : isConnecting ? '#FFB800' : GOLD_DIM
-  const label        = isError ? 'ERROR' : isReady ? 'READY' : isConnecting ? 'CONNECTING' : 'STANDBY'
+// ─── Status row ───────────────────────────────────────────────
+function StatRow({ dot, label, active }: { dot:string; label:string; active:boolean }) {
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 6,
-      padding: '4px 12px', borderRadius: 20,
-      border: `1px solid ${isError ? ERROR_COL+'44' : GOLD_BORDER}`,
-      background: 'rgba(0,0,0,0.55)',
-    }}>
-      <div style={{
-        width: 6, height: 6, borderRadius: '50%',
-        background: dotColor,
-        boxShadow: `0 0 6px ${dotColor}`,
-        animation: isConnecting ? 'hk-glow-pulse 1.2s ease-in-out infinite' : undefined,
-      }}/>
-      <span style={{ color: GOLD_DIM, fontSize: 9, letterSpacing: '0.22em', fontFamily: 'monospace' }}>
-        CONNECTION
-      </span>
-      <span style={{ color: isError ? ERROR_COL : isReady ? '#4ade80' : GOLD_BRIGHT, fontSize: 9, fontWeight: 700, letterSpacing: '0.18em', fontFamily: 'monospace' }}>
+    <div style={{display:'flex',alignItems:'center',gap:8,padding:'4px 0'}}>
+      <div style={{width:7,height:7,borderRadius:'50%',background:dot,flexShrink:0,boxShadow:active?`0 0 6px ${dot}`:'none',opacity:active?.95:.25}}/>
+      <span style={{fontSize:9,fontFamily:'monospace',letterSpacing:'.14em',color:active?'rgba(255,255,255,.82)':'rgba(255,255,255,.28)',fontWeight:active?700:400}}>
         {label}
       </span>
     </div>
   )
 }
 
-// ─── Main Page ───────────────────────────────────────────────
-function AssistantPageContent() {
+// ─── Main ────────────────────────────────────────────────────
+function AssistantContent() {
   const router = useRouter()
-  const [showSettings, setShowSettings] = React.useState(false)
+  const [showSettings,setShowSettings] = React.useState(false)
 
   const {
-    mode, errorMessage, messages,
-    isSession, isStandby, isSpeechSupported,
-    startSession, stopSession, handleUtterance,
-    voiceSettings, setVoiceSettings,
-    voiceEngineMode, connectRealtime, disconnectRealtime,
+    mode,errorMessage,messages,isSpeechSupported,
+    isSession,isStandby,
+    startSession,stopSession,handleUtterance,
+    voiceSettings,setVoiceSettings,
+    voiceEngineMode,disconnectRealtime,
   } = useSystemJarvis()
 
-  const isError      = mode === 'error'
-  const isActive     = mode === 'listening'
-  const isProc       = mode === 'processing'
-  const isWork       = mode === 'working'
-  const isSpeak      = mode === 'speaking'
-  const isConnecting = voiceEngineMode === 'realtime-connecting'
+  const isErr      = mode === 'error'
+  const isActive   = mode === 'listening'
+  const isProc     = mode === 'processing' || mode === 'working'
+  const isSpeak    = mode === 'speaking'
+  const isConn     = voiceEngineMode === 'realtime-connecting'
+  const engineReady = voiceEngineMode === 'realtime'
 
-  const handleToggle = () => isSession ? stopSession() : startSession()
+  const cfgKey = isConn ? 'connecting' : mode
+  const stateColor = STATE_COLOR[cfgKey] ?? GOLD
 
-  // ── State label text ──
-  const stateText = isConnecting
-    ? { main: 'LINK', sub: '接続中...' }
-    : {
-      idle:       { main: 'JARVIS',   sub: isStandby ? 'STANDBY' : 'STANDBY' },
-      listening:  { main: 'JARVIS',   sub: 'LISTENING' },
-      processing: { main: 'JARVIS',   sub: 'THINKING' },
-      working:    { main: 'JARVIS',   sub: 'WORKING' },
-      speaking:   { main: 'JARVIS',   sub: 'SPEAKING' },
-      error:      { main: 'JARVIS',   sub: 'ERROR' },
-    }[mode] ?? { main: 'JARVIS', sub: 'STANDBY' }
+  const toggle = () => isSession ? stopSession() : startSession()
 
-  // ── Layout ───────────────────────────────────────────────
+  const QUICK = [
+    {label:'ホームに戻る', utt:'ホームに戻って', Icon:Home},
+    {label:'通知を確認',   utt:'通知を確認して', Icon:Bell},
+    {label:'スケジュール', utt:'スケジュールを見せて', Icon:Calendar},
+    {label:'AIに質問',    utt:'何でも聞いて',   Icon:Zap},
+  ]
+
   return (
-    <div style={{
-      display: 'flex', flexDirection: 'column', minHeight: '100dvh',
-      background: BG_DARK, position: 'relative', overflow: 'hidden',
-    }}>
-      {/* keyframes for connection bar dot */}
+    <div style={{display:'flex',flexDirection:'column',height:'100%',background:BG,position:'relative',overflow:'hidden'}}>
       <style>{`
-        @keyframes hk-glow-pulse { 0%,100%{opacity:.4} 50%{opacity:1} }
+        .jp-right{display:flex;flex-direction:column;gap:10px;padding:14px;width:190px;flex-shrink:0;border-left:1px solid ${GOLD_BDR};overflow-y:auto}
+        @media(max-width:840px){.jp-right{display:none}}
+        @keyframes j-conn{0%,100%{opacity:.35}50%{opacity:1}}
       `}</style>
 
-      {/* Settings overlay */}
       {showSettings && (
-        <VoiceSettingsPanel settings={voiceSettings} onClose={() => setShowSettings(false)} onSave={setVoiceSettings} />
+        <VoiceSettingsPanel settings={voiceSettings} onClose={()=>setShowSettings(false)} onSave={setVoiceSettings}/>
       )}
 
       {/* ── Header ── */}
-      <header style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '10px 16px', flexShrink: 0,
-        borderBottom: `1px solid ${GOLD_BORDER}`,
-        background: 'rgba(0,0,0,0.72)',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#4ade80', boxShadow: '0 0 6px #4ade80' }}/>
-          <span style={{ color: GOLD_DIM, fontSize: 9, letterSpacing: '0.24em', fontFamily: 'monospace' }}>
-            AI ENGINE
-          </span>
-          <span style={{ color: GOLD_DIM, fontSize: 9, fontFamily: 'monospace', opacity: 0.6 }}>
-            <LiveClock />
-          </span>
+      <header style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 16px',flexShrink:0,borderBottom:`1px solid ${GOLD_BDR}`,background:'rgba(0,0,0,.80)'}}>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          <div style={{width:6,height:6,borderRadius:'50%',background:'#4ade80',boxShadow:'0 0 6px #4ade80'}}/>
+          <span style={{color:GOLD_D,fontSize:9,letterSpacing:'.22em',fontFamily:'monospace'}}>AI ENGINE</span>
+          <span style={{color:GOLD_D,fontSize:9,fontFamily:'monospace',opacity:.55}}><Clock/></span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
           {isSession && (
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 20,
-              background: 'rgba(255,200,0,0.14)', border: `1px solid ${GOLD}`,
-              boxShadow: `0 0 10px rgba(255,200,0,0.30)`,
-            }}>
-              <div style={{ width: 5, height: 5, borderRadius: '50%', background: isStandby ? GOLD_DIM : '#4ade80', animation: 'hk-glow-pulse 1.2s ease-in-out infinite' }}/>
-              <span style={{ color: GOLD_BRIGHT, fontSize: 9, fontWeight: 700, letterSpacing: '0.18em', fontFamily: 'monospace' }}>
-                {isStandby ? 'STANDBY' : 'ACTIVE'}
+            <div style={{display:'flex',alignItems:'center',gap:5,padding:'3px 10px',borderRadius:20,
+              background:'rgba(255,215,0,.12)',border:`1px solid ${GOLD}`,boxShadow:`0 0 10px rgba(255,215,0,.28)`}}>
+              <div style={{width:5,height:5,borderRadius:'50%',background:isStandby?GOLD_D:'#4ade80',animation:'j-conn 1.2s ease-in-out infinite'}}/>
+              <span style={{color:GOLD_B,fontSize:9,fontWeight:700,letterSpacing:'.16em',fontFamily:'monospace'}}>
+                {isStandby?'STANDBY':'ACTIVE'}
               </span>
             </div>
           )}
-          <WaveBar active={isActive || isSpeak} />
-          <button onClick={() => setShowSettings(p => !p)} style={{ color: GOLD_DIM, display: 'flex', padding: 4 }} aria-label="設定">
-            <Settings style={{ width: 15, height: 15 }} />
+          <Wave active={isActive||isSpeak}/>
+          <button onClick={()=>setShowSettings(p=>!p)} style={{color:GOLD_D,background:'none',border:'none',cursor:'pointer',display:'flex',padding:4}} aria-label="設定">
+            <Settings style={{width:14,height:14}}/>
           </button>
-          <button onClick={() => router.push('/home')} style={{ color: GOLD_DIM, display: 'flex', padding: 4 }} aria-label="閉じる">
-            <X style={{ width: 15, height: 15 }} />
+          <button onClick={()=>router.push('/home')} style={{color:GOLD_D,background:'none',border:'none',cursor:'pointer',display:'flex',padding:4}} aria-label="閉じる">
+            <X style={{width:14,height:14}}/>
           </button>
         </div>
       </header>
 
       {/* ── Body ── */}
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      <div style={{display:'flex',flex:1,overflow:'hidden'}}>
 
-        {/* ── Left panel (desktop only, minimal) ── */}
-        <aside style={{
-          display: 'none', // hidden on mobile
-          flexDirection: 'column', gap: 12, padding: 16, width: 160, flexShrink: 0,
-          borderRight: `1px solid ${GOLD_BORDER}`,
-        }} className="hidden-xs md-flex">
-          <style>{`.md-flex{display:flex!important} @media(max-width:767px){.md-flex{display:none!important}}`}</style>
-          {/* Session button */}
-          <button onClick={handleToggle} disabled={isProc || isWork}
-            style={{
-              padding: '10px 0', borderRadius: 12, border: `1px solid ${isSession ? GOLD : GOLD_BORDER}`,
-              background: isSession ? 'rgba(255,200,0,0.12)' : 'rgba(255,200,0,0.04)',
-              boxShadow: isSession ? `0 0 12px rgba(255,200,0,0.30)` : 'none',
-              color: isSession ? GOLD_BRIGHT : GOLD_DIM, cursor: 'pointer', opacity: (isProc||isWork) ? 0.4 : 1,
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
-            }}>
-            <Radio style={{ width: 18, height: 18 }} />
-            <span style={{ fontSize: 9, letterSpacing: '0.18em', fontFamily: 'monospace', fontWeight: 700 }}>
-              {isSession ? 'ACTIVE' : 'OFFLINE'}
-            </span>
-          </button>
-          {/* Voice engine */}
-          <div style={{ padding: '8px 10px', borderRadius: 10, border: `1px solid ${GOLD_BORDER}`, background: 'rgba(255,200,0,0.04)' }}>
-            <div style={{ fontSize: 8, color: GOLD_DIM, letterSpacing: '0.2em', fontFamily: 'monospace', marginBottom: 6 }}>VOICE ENGINE</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-              <div style={{ width: 5, height: 5, borderRadius: '50%', background: voiceEngineMode === 'realtime' ? '#4ade80' : voiceEngineMode === 'realtime-connecting' ? '#FFB800' : GOLD_DIM }}/>
-              <span style={{ fontSize: 9, color: voiceEngineMode === 'realtime' ? '#4ade80' : GOLD_BRIGHT, fontFamily: 'monospace', fontWeight: 700 }}>
-                {voiceEngineMode === 'realtime' ? 'REALTIME' : voiceEngineMode === 'realtime-connecting' ? 'LINK...' : 'OFF'}
-              </span>
-            </div>
-            {voiceEngineMode === 'realtime' && (
-              <button onClick={disconnectRealtime} style={{ fontSize: 8, color: GOLD_DIM, marginTop: 4, cursor: 'pointer', background: 'none', border: 'none' }}>
-                切断
-              </button>
-            )}
-          </div>
-          {/* Recent messages mini */}
-          {messages.length > 0 && (
-            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <div style={{ fontSize: 8, color: GOLD_DIM, letterSpacing: '0.2em', fontFamily: 'monospace', marginBottom: 2 }}>LOG</div>
-              {messages.slice(-4).map((m, i) => (
-                <div key={i} style={{
-                  fontSize: 9, lineHeight: 1.4, padding: '3px 6px', borderRadius: 6,
-                  background: m.role === 'user' ? 'rgba(255,200,0,0.06)' : 'rgba(255,255,255,0.03)',
-                  color: m.role === 'user' ? GOLD_BRIGHT : 'rgba(255,255,255,0.55)',
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }}>
-                  <span style={{ opacity: 0.5, marginRight: 3 }}>{m.role === 'user' ? '>' : '◆'}</span>
-                  {m.text.slice(0, 28)}{m.text.length > 28 ? '…' : ''}
-                </div>
-              ))}
-            </div>
-          )}
-          <button onClick={() => setShowSettings(true)}
-            style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 8px', borderRadius: 8, border: `1px solid ${GOLD_BORDER}`, background: 'none', color: GOLD_DIM, cursor: 'pointer', marginTop: 'auto', fontSize: 9 }}>
-            <Settings style={{ width: 11, height: 11 }} /> 音声設定
-          </button>
-        </aside>
-
-        {/* ── Center: HUD main area ── */}
-        <main style={{
-          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-          flex: 1, padding: '12px 8px 20px', gap: 16, overflow: 'hidden',
-        }}>
-          {/* HUD circle - takes most of the space */}
-          <div style={{
-            position: 'relative',
-            width: 'clamp(260px, min(44vw, 56vh), 500px)',
-            height: 'clamp(260px, min(44vw, 56vh), 500px)',
-            flexShrink: 0,
-          }}>
-            <HikaruCoreSized mode={mode} isConnecting={isConnecting} />
-          </div>
+        {/* ── Center: Holographic HUD ── */}
+        <main style={{display:'flex',flex:1,flexDirection:'column',alignItems:'center',overflow:'hidden',padding:'8px 0 14px'}}>
+          {/* HUD area - takes most of the space */}
+          <JarvisHUD mode={mode} isConnecting={isConn}/>
 
           {/* Mic button */}
-          <MicButton isSession={isSession} isProcessing={isProc || isWork} onClick={handleToggle} />
-
-          {/* Session label */}
-          <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <span style={{ color: isSession ? GOLD_BRIGHT : GOLD_DIM, fontSize: 10, fontFamily: 'monospace', letterSpacing: '0.18em' }}>
-              {isSession ? (isStandby ? 'スタンバイ中 — 話しかけてください' : '会話中 — 「終了」で停止') : 'タップしてJARVISを起動'}
+          <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:10,marginTop:12,flexShrink:0}}>
+            <MicBtn isOn={isSession} disabled={isProc} onClick={toggle}/>
+            <span style={{color:isSession?GOLD_B:GOLD_D,fontSize:9,fontFamily:'monospace',letterSpacing:'.16em',textAlign:'center'}}>
+              {isSession?(isStandby?'スタンバイ中 — 話しかけてください':'会話中 — 「終了」で停止'):'タップしてJARVISを起動'}
             </span>
-            {!isSpeechSupported && (
-              <span style={{ color: 'rgba(255,100,80,0.8)', fontSize: 9 }}>
-                このブラウザでは音声入力を利用できません
-              </span>
+            {isErr && (
+              <span style={{color:'#FF5555',fontSize:9,fontFamily:'monospace'}}>{errorMessage||'接続エラー'}</span>
             )}
-            {isError && (
-              <span style={{ color: ERROR_COL, fontSize: 10, fontFamily: 'monospace', letterSpacing: '0.12em' }}>
-                {errorMessage || '接続エラー'}
-              </span>
+            {!isSpeechSupported && (
+              <span style={{color:'rgba(255,100,60,.7)',fontSize:8}}>音声入力非対応ブラウザ</span>
             )}
           </div>
 
           {/* Bottom info bar */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 20, flexWrap: 'wrap' }}>
-            <ConnectionBar voiceEngineMode={voiceEngineMode} isError={isError} />
-            <WaveBar active={isActive || isSpeak} size="md" />
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 20,
-              border: `1px solid ${GOLD_BORDER}`, background: 'rgba(0,0,0,0.55)',
-            }}>
-              <span style={{ fontSize: 9, color: GOLD_DIM, letterSpacing: '0.18em', fontFamily: 'monospace' }}>AI MODEL</span>
-              <span style={{ fontSize: 9, color: GOLD_BRIGHT, fontWeight: 700, letterSpacing: '0.12em', fontFamily: 'monospace' }}>GPT-4o</span>
+          <div style={{display:'flex',alignItems:'center',gap:16,marginTop:10,flexShrink:0,flexWrap:'wrap',justifyContent:'center'}}>
+            {/* Connection */}
+            <div style={{display:'flex',alignItems:'center',gap:6,padding:'3px 10px',borderRadius:20,border:`1px solid ${GOLD_BDR}`,background:'rgba(0,0,0,.60)'}}>
+              <div style={{width:5,height:5,borderRadius:'50%',
+                background:isErr?'#FF3030':engineReady?'#4ade80':isConn?'#FFB800':GOLD_D,
+                boxShadow:engineReady?'0 0 5px #4ade80':isConn?'0 0 5px #FFB800':'none',
+                animation:isConn?'j-conn 1.2s ease-in-out infinite':undefined}}/>
+              <span style={{color:GOLD_D,fontSize:8,letterSpacing:'.20em',fontFamily:'monospace'}}>CONNECTION</span>
+              <span style={{color:isErr?'#FF5555':engineReady?'#4ade80':isConn?'#FFB800':GOLD_D,fontSize:8,fontWeight:700,letterSpacing:'.14em',fontFamily:'monospace'}}>
+                {isErr?'ERROR':engineReady?'READY':isConn?'CONNECTING':'STANDBY'}
+              </span>
+            </div>
+            {/* Wave */}
+            <Wave active={isActive||isSpeak}/>
+            {/* Engine label */}
+            <div style={{display:'flex',alignItems:'center',gap:5,padding:'3px 10px',borderRadius:20,border:`1px solid ${GOLD_BDR}`,background:'rgba(0,0,0,.60)'}}>
+              <span style={{color:GOLD_D,fontSize:8,letterSpacing:'.18em',fontFamily:'monospace'}}>AI ENGINE</span>
+              <div style={{width:5,height:5,borderRadius:'50%',background:isSession?stateColor:GOLD_D,boxShadow:isSession?`0 0 5px ${stateColor}`:'none'}}/>
             </div>
           </div>
         </main>
 
-        {/* ── Right panel (desktop only, minimal) ── */}
-        <aside style={{ flexDirection: 'column', gap: 10, padding: 16, width: 160, flexShrink: 0, borderLeft: `1px solid ${GOLD_BORDER}` }}
-          className="hidden-xs md-flex">
+        {/* ── Right Panel (desktop only) ── */}
+        <aside className="jp-right">
           {/* Status */}
-          <div style={{ padding: '8px 10px', borderRadius: 10, border: `1px solid ${GOLD_BORDER}`, background: 'rgba(255,200,0,0.04)' }}>
-            <div style={{ fontSize: 8, color: GOLD_DIM, letterSpacing: '0.2em', fontFamily: 'monospace', marginBottom: 6 }}>STATUS</div>
-            {[
-              { dot: '#4ade80', label: 'ONLINE' },
-              { dot: isSession ? GOLD : GOLD_DIM, label: isSession ? 'SESSION ON' : 'IDLE' },
-              { dot: GOLD, label: 'READY' },
-            ].map(({dot, label}) => (
-              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
-                <div style={{ width: 5, height: 5, borderRadius: '50%', background: dot, boxShadow: `0 0 4px ${dot}` }}/>
-                <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.55)', fontFamily: 'monospace' }}>{label}</span>
-              </div>
-            ))}
+          <div style={{padding:'10px 10px',borderRadius:10,border:`1px solid ${GOLD_BDR}`,background:'rgba(255,200,0,.03)'}}>
+            <div style={{color:GOLD_D,fontSize:7,letterSpacing:'.24em',fontFamily:'monospace',marginBottom:8}}>STATUS</div>
+            <StatRow dot="#4ade80" label="ONLINE"     active/>
+            <StatRow dot={GOLD}   label="LISTENING"  active={isActive}/>
+            <StatRow dot="#FFB800" label="THINKING"   active={isProc}/>
+            <StatRow dot="#00E060" label="SPEAKING"   active={isSpeak}/>
+            <StatRow dot="#FF4422" label="ERROR"      active={isErr}/>
           </div>
-          {/* Mode state */}
-          <div style={{ padding: '8px 10px', borderRadius: 10, border: `1px solid ${GOLD_BORDER}`, background: 'rgba(255,200,0,0.04)' }}>
-            <div style={{ fontSize: 8, color: GOLD_DIM, letterSpacing: '0.2em', fontFamily: 'monospace', marginBottom: 6 }}>MODE</div>
-            <div style={{
-              fontSize: 11, color: isError ? ERROR_COL : GOLD_BRIGHT, fontWeight: 700,
-              letterSpacing: '0.14em', fontFamily: 'monospace',
-              textShadow: isError ? `0 0 8px ${ERROR_COL}` : `0 0 8px rgba(255,200,0,0.6)`,
-            }}>
-              {mode.toUpperCase()}
+
+          {/* Mode */}
+          <div style={{padding:'8px 10px',borderRadius:10,border:`1px solid ${GOLD_BDR}`,background:'rgba(255,200,0,.03)'}}>
+            <div style={{color:GOLD_D,fontSize:7,letterSpacing:'.24em',fontFamily:'monospace',marginBottom:6}}>MODE</div>
+            <div style={{display:'flex',alignItems:'center',gap:6}}>
+              <div style={{width:6,height:6,borderRadius:'50%',background:stateColor,boxShadow:isSession?`0 0 6px ${stateColor}`:'none'}}/>
+              <span style={{fontSize:10,fontWeight:700,color:stateColor,fontFamily:'monospace',letterSpacing:'.12em',
+                textShadow:isSession?`0 0 8px ${stateColor}`:'none'}}>
+                {cfgKey.toUpperCase()}
+              </span>
             </div>
+            {voiceEngineMode === 'realtime' && (
+              <button onClick={disconnectRealtime} style={{marginTop:6,fontSize:8,color:GOLD_D,background:'none',border:'none',cursor:'pointer',fontFamily:'monospace'}}>
+                切断
+              </button>
+            )}
           </div>
-          {/* Recent conv */}
+
+          {/* Conversation */}
           {messages.length > 0 && (
-            <div style={{ flex: 1, overflow: 'hidden' }}>
-              <div style={{ fontSize: 8, color: GOLD_DIM, letterSpacing: '0.2em', fontFamily: 'monospace', marginBottom: 4 }}>CONV</div>
-              {messages.slice(-5).map((m, i) => (
-                <div key={i} style={{
-                  fontSize: 9, lineHeight: 1.4, marginBottom: 3, padding: '3px 6px', borderRadius: 5,
-                  background: m.role === 'user' ? 'rgba(255,200,0,0.06)' : 'rgba(255,255,255,0.03)',
-                  color: m.role === 'user' ? GOLD_SOFT : 'rgba(255,255,255,0.45)',
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }}>
-                  {m.text.slice(0, 22)}{m.text.length > 22 ? '…' : ''}
+            <div style={{flex:1,overflow:'hidden',display:'flex',flexDirection:'column',gap:4}}>
+              <div style={{color:GOLD_D,fontSize:7,letterSpacing:'.24em',fontFamily:'monospace',marginBottom:4}}>CONVERSATION</div>
+              {messages.slice(-6).map((m,mi)=>(
+                <div key={mi} style={{fontSize:9,lineHeight:1.45,padding:'3px 7px',borderRadius:6,
+                  background:m.role==='user'?'rgba(255,215,0,.07)':'rgba(255,255,255,.03)',
+                  color:m.role==='user'?GOLD_B:'rgba(255,255,255,.45)',
+                  overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                  <span style={{opacity:.4,marginRight:3}}>{m.role==='user'?'▶':'◆'}</span>
+                  {m.text.slice(0,26)}{m.text.length>26?'…':''}
                 </div>
               ))}
             </div>
           )}
-        </aside>
-      </div>
 
-      {/* ── Mobile: bottom controls ── */}
-      <div className="md-flex" style={{ display: 'none' }}>
-        <style>{`@media(max-width:767px){.mob-bar{display:flex!important}}`}</style>
-      </div>
-      <div className="mob-bar" style={{
-        display: 'none', flexDirection: 'column', alignItems: 'center', gap: 10, paddingBottom: 16,
-      }}>
-        <ConnectionBar voiceEngineMode={voiceEngineMode} isError={isError} />
+          {/* Quick commands */}
+          <div>
+            <div style={{color:GOLD_D,fontSize:7,letterSpacing:'.24em',fontFamily:'monospace',marginBottom:6}}>QUICK COMMAND</div>
+            <div style={{display:'flex',flexDirection:'column',gap:4}}>
+              {QUICK.map(({label,utt,Icon})=>(
+                <button key={label} onClick={()=>handleUtterance(utt)}
+                  disabled={isActive||isProc}
+                  style={{display:'flex',alignItems:'center',gap:6,padding:'6px 8px',borderRadius:8,
+                    border:`1px solid ${GOLD_BDR}`,background:'none',color:'rgba(255,255,255,.50)',
+                    cursor:'pointer',fontSize:9,textAlign:'left',opacity:isActive||isProc?.4:1,
+                    transition:'background .15s'}}>
+                  <Icon style={{color:GOLD_D,width:11,height:11,flexShrink:0}}/>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Settings */}
+          <button onClick={()=>setShowSettings(true)}
+            style={{display:'flex',alignItems:'center',justifyContent:'center',gap:5,padding:'6px 0',borderRadius:8,
+              border:`1px solid ${GOLD_BDR}`,background:'none',color:GOLD_D,cursor:'pointer',fontSize:9,fontFamily:'monospace',marginTop:'auto'}}>
+            <Settings style={{width:11,height:11}}/>音声設定
+          </button>
+        </aside>
       </div>
     </div>
   )
@@ -461,12 +363,12 @@ function AssistantPageContent() {
 export default function AssistantPage() {
   return (
     <React.Suspense fallback={
-      <div style={{ display:'flex', minHeight:'100dvh', alignItems:'center', justifyContent:'center', background: '#030303' }}>
-        <div style={{ width:32, height:32, borderRadius:'50%', border:'2px solid #FFD700', borderTopColor:'transparent', animation:'spin 1s linear infinite' }}/>
+      <div style={{display:'flex',height:'100dvh',alignItems:'center',justifyContent:'center',background:BG}}>
+        <div style={{width:30,height:30,borderRadius:'50%',border:`2px solid ${GOLD}`,borderTopColor:'transparent',animation:'spin 1s linear infinite'}}/>
         <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
       </div>
     }>
-      <AssistantPageContent />
+      <AssistantContent/>
     </React.Suspense>
   )
 }

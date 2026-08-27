@@ -4,423 +4,407 @@ import * as React from 'react'
 import type { VoiceMode } from '@/lib/voice/state/types'
 
 // ============================================================
-// HikaruCore — JARVIS HUD (参考画像準拠)
-// SVGのみ使用。Canvas/Three.js不使用。
-// 8〜10層リング + ネオンゴールド発光 + センターテキスト
+// HikaruCore — 3D Holographic JARVIS HUD
+// 参考画像準拠: Top Emitter + Beams + Central Rings + Bottom Projector
+// SVG only. No Canvas / WebGL / Three.js.
 // ============================================================
 
-interface HikaruCoreProps {
+export interface HikaruCoreProps {
   mode:          VoiceMode
-  size?:         number
+  size?:         number   // central HUD diameter (px)
   isConnecting?: boolean
 }
 
-// ── カラー定義 ──────────────────────────────────────────────
-const C = {
-  gold:       '#FFD700',
-  goldBright: '#FFE878',
-  goldSoft:   '#FFCC33',
-  goldDim:    '#C8941A',
-  goldFaint:  'rgba(255,200,0,0.18)',
-  amber:      '#FFB800',
-  amberDim:   '#CC8800',
-  error:      '#FF4422',
-  errorDim:   'rgba(255,60,20,0.35)',
-  dark:       '#050505',
-} as const
+// ── State color system ────────────────────────────────────────
+interface C { p: string; b: string; g: string; i: number }
 
-// ── State設定 ────────────────────────────────────────────────
-interface Cfg {
-  ringSpeed:       [string, string, string, string]  // outer→inner 4層速度
-  pulseDur:        string
-  glowColor:       string
-  glowStrong:      string
-  particleOpa:     number
-  ringOpa:         [number, number, number, number]
-  innerBright:     boolean
-  scannerOn:       boolean
-  waveActive:      boolean
-  connectingArc:   boolean
+const COLORS: Record<string, C> = {
+  idle:       { p:'#C89010', b:'#FFD700', g:'rgba(200,144,16,',  i:0.32 },
+  connecting: { p:'#00AFFF', b:'#7FDDFF', g:'rgba(0,175,255,',   i:0.70 },
+  listening:  { p:'#FFD700', b:'#FFF090', g:'rgba(255,215,0,',   i:1.00 },
+  processing: { p:'#FFB800', b:'#FFD860', g:'rgba(255,184,0,',   i:0.90 },
+  working:    { p:'#C030D8', b:'#E880FF', g:'rgba(192,48,216,',  i:0.88 },
+  speaking:   { p:'#00E060', b:'#80FFB0', g:'rgba(0,224,96,',    i:1.00 },
+  error:      { p:'#FF3030', b:'#FF8888', g:'rgba(255,48,48,',   i:0.80 },
 }
 
-const CFGS: Record<string, Cfg> = {
-  idle: {
-    ringSpeed:     ['35s', '28s', '22s', '18s'],
-    pulseDur:      '3.5s',
-    glowColor:     'rgba(255,180,0,0.15)',
-    glowStrong:    'rgba(255,200,0,0.08)',
-    particleOpa:   0.35,
-    ringOpa:       [0.35, 0.45, 0.50, 0.60],
-    innerBright:   false,
-    scannerOn:     false,
-    waveActive:    false,
-    connectingArc: false,
-  },
-  listening: {
-    ringSpeed:     ['12s', '9s', '6s', '4s'],
-    pulseDur:      '1.0s',
-    glowColor:     'rgba(255,190,0,0.40)',
-    glowStrong:    'rgba(255,210,0,0.25)',
-    particleOpa:   0.85,
-    ringOpa:       [0.65, 0.75, 0.85, 1.0],
-    innerBright:   true,
-    scannerOn:     false,
-    waveActive:    true,
-    connectingArc: false,
-  },
-  processing: {
-    ringSpeed:     ['8s', '6s', '4s', '2.5s'],
-    pulseDur:      '0.6s',
-    glowColor:     'rgba(255,200,0,0.35)',
-    glowStrong:    'rgba(255,215,0,0.20)',
-    particleOpa:   1.0,
-    ringOpa:       [0.70, 0.80, 0.90, 1.0],
-    innerBright:   true,
-    scannerOn:     true,
-    waveActive:    false,
-    connectingArc: false,
-  },
-  working: {
-    ringSpeed:     ['6s', '5s', '3s', '2s'],
-    pulseDur:      '0.5s',
-    glowColor:     'rgba(255,200,0,0.38)',
-    glowStrong:    'rgba(255,210,0,0.22)',
-    particleOpa:   1.0,
-    ringOpa:       [0.70, 0.80, 0.90, 1.0],
-    innerBright:   true,
-    scannerOn:     true,
-    waveActive:    false,
-    connectingArc: false,
-  },
-  speaking: {
-    ringSpeed:     ['10s', '8s', '5s', '3.5s'],
-    pulseDur:      '0.9s',
-    glowColor:     'rgba(255,200,0,0.50)',
-    glowStrong:    'rgba(255,220,0,0.32)',
-    particleOpa:   0.95,
-    ringOpa:       [0.70, 0.85, 0.95, 1.0],
-    innerBright:   true,
-    scannerOn:     false,
-    waveActive:    true,
-    connectingArc: false,
-  },
-  error: {
-    ringSpeed:     ['20s', '16s', '12s', '8s'],
-    pulseDur:      '0.7s',
-    glowColor:     'rgba(255,50,20,0.30)',
-    glowStrong:    'rgba(255,60,30,0.18)',
-    particleOpa:   0.50,
-    ringOpa:       [0.45, 0.55, 0.65, 0.80],
-    innerBright:   false,
-    scannerOn:     false,
-    waveActive:    false,
-    connectingArc: false,
-  },
-  connecting: {
-    ringSpeed:     ['15s', '12s', '8s', '5s'],
-    pulseDur:      '1.4s',
-    glowColor:     'rgba(255,170,0,0.25)',
-    glowStrong:    'rgba(255,185,0,0.12)',
-    particleOpa:   0.50,
-    ringOpa:       [0.40, 0.50, 0.60, 0.70],
-    innerBright:   false,
-    scannerOn:     false,
-    waveActive:    false,
-    connectingArc: true,
-  },
+// ── Labels ───────────────────────────────────────────────────
+const LABELS: Record<string, [string, string]> = {
+  idle:       ['JARVIS', 'STANDBY'],
+  connecting: ['JARVIS', 'CONNECTING'],
+  listening:  ['JARVIS', 'LISTENING'],
+  processing: ['JARVIS', 'THINKING'],
+  working:    ['JARVIS', 'PROCESSING'],
+  speaking:   ['JARVIS', 'SPEAKING'],
+  error:      ['JARVIS', 'ERROR'],
 }
 
-// ── テキスト ─────────────────────────────────────────────────
-const LABELS: Record<string, { main: string; sub: string }> = {
-  idle:       { main: 'JARVIS',   sub: 'STANDBY' },
-  listening:  { main: 'LISTEN',   sub: '聞いています' },
-  processing: { main: 'THINK',    sub: '考えています' },
-  working:    { main: 'PROCESS',  sub: '処理中' },
-  speaking:   { main: 'SPEAK',    sub: '応答しています' },
-  error:      { main: 'ERROR',    sub: 'エラー' },
-  connecting: { main: 'LINK',     sub: '接続中...' },
+// ── Speed multiplier ─────────────────────────────────────────
+const SPEED: Record<string, number> = {
+  idle:0.35, connecting:0.70, listening:1.20,
+  processing:1.80, working:2.00, speaking:0.95, error:0.50,
 }
 
-// ── パーティクル配置（固定seed）────────────────────────────
+// ── Fixed particles ───────────────────────────────────────────
 const DOTS = [
-  {a:8,  rr:0.96}, {a:28, rr:0.93}, {a:55, rr:0.97},
-  {a:80, rr:0.94}, {a:108,rr:0.96}, {a:132,rr:0.92},
-  {a:158,rr:0.97}, {a:178,rr:0.94}, {a:205,rr:0.96},
-  {a:228,rr:0.93}, {a:255,rr:0.97}, {a:278,rr:0.94},
-  {a:305,rr:0.96}, {a:328,rr:0.92}, {a:352,rr:0.97},
-  {a:42, rr:0.98}, {a:142,rr:0.98}, {a:242,rr:0.98},
-]
+  [12,1.06],[32,1.09],[55,1.05],[78,1.08],[100,1.06],[122,1.07],
+  [145,1.05],[168,1.09],[192,1.06],[215,1.08],[238,1.05],[260,1.07],
+  [282,1.06],[305,1.09],[328,1.05],[350,1.08],
+  [20,1.13],[80,1.12],[140,1.13],[200,1.12],[260,1.13],[320,1.12],
+  [50,1.16],[170,1.15],[290,1.16],
+] as [number,number][]
 
-// ── ウェーブバー ──────────────────────────────────────────────
-const WAVE_H = [0.35, 0.60, 0.85, 1.0, 0.70, 1.0, 0.85, 0.55, 0.35]
+// ── Wave bar heights ──────────────────────────────────────────
+const WAVE = [.28,.50,.72,.92,1,.95,.78,.96,1,.82,.58,.32]
 
-export function HikaruCore({ mode, size = 280, isConnecting = false }: HikaruCoreProps) {
-  const cfgKey    = isConnecting ? 'connecting' : mode
-  const cfg       = CFGS[cfgKey] ?? CFGS.idle
-  const label     = LABELS[cfgKey] ?? LABELS.idle
-  const isErr     = mode === 'error' && !isConnecting
-  const r         = size / 2
+export function HikaruCore({ mode, size = 300, isConnecting = false }: HikaruCoreProps) {
+  const key   = isConnecting ? 'connecting' : mode
+  const c     = COLORS[key] ?? COLORS.idle
+  const [lM, lS] = LABELS[key] ?? LABELS.idle
+  const spd   = SPEED[key] ?? 1
+  const isErr = key === 'error'
 
-  const prefersReduced = React.useRef(
+  const { p, b, g, i } = c // primary, bright, glow-prefix, intensity
+
+  const pr = React.useRef(
     typeof window !== 'undefined'
-      ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
-      : false
-  )
-  const pr = prefersReduced.current
+      ? window.matchMedia('(prefers-reduced-motion:reduce)').matches : false
+  ).current
 
-  const spd = (s: string) => pr ? `${parseFloat(s) * 4}s` : s
-  const [sA, sB, sC, sD] = cfg.ringSpeed
-  const [oA, oB, oC, oD] = cfg.ringOpa
+  // SVG layout (normalized)
+  const W    = size * 1.05
+  const H    = size * 1.82
+  const cx   = W / 2
 
-  // リング色
-  const rC    = isErr ? C.error  : C.gold
-  const rCB   = isErr ? C.error  : C.goldBright
-  const rCSoft = isErr ? C.errorDim : C.goldSoft
+  // Central HUD
+  const hudY = H * 0.455
+  const R    = size * 0.404   // outer radius
 
-  // テキスト色
-  const tMain = isErr ? C.error : C.goldBright
-  const tSub  = isErr ? C.error : C.goldSoft
+  // Top emitter
+  const tY   = H * 0.082
+  const tRx  = size * 0.232
+  const tRy  = size * 0.038
 
-  // グロー
-  const glowBox  = isErr
-    ? `0 0 ${size*0.12}px rgba(255,50,20,.55), 0 0 ${size*0.22}px rgba(255,30,10,.30), 0 0 ${size*0.35}px rgba(200,20,0,.12)`
-    : isConnecting
-    ? `0 0 ${size*0.10}px rgba(255,180,0,.40), 0 0 ${size*0.20}px rgba(255,160,0,.22), 0 0 ${size*0.32}px rgba(255,140,0,.10)`
-    : `0 0 ${size*0.12}px rgba(255,200,0,.${cfg.innerBright?'60':'30'}), 0 0 ${size*0.24}px rgba(255,180,0,.${cfg.innerBright?'35':'18'}), 0 0 ${size*0.40}px rgba(255,150,0,.${cfg.innerBright?'18':'08'})`
+  // Bottom projector
+  const bY   = H * 0.900
+  const bRx  = size * 0.346
+  const bRy  = size * 0.058
 
-  // tick mark 24本
-  const TICKS = Array.from({length:36},(_,i)=>({ a:(i*10*Math.PI)/180, major: i%6===0 }))
+  // Beam
+  const bT1  = tY + tRy * 2.2
+  const bT2  = hudY - R * 1.05
+  const bB1  = hudY + R * 1.05
+  const bB2  = bY - bRy * 2.2
 
-  // 主テキスト・サブテキストのフォントサイズ
-  const fMain = Math.max(10, size * 0.082)
-  const fSub  = Math.max(7,  size * 0.042)
+  // Speed helper
+  const d = (s: number) => `${pr ? s * 5 : s / spd}s`
+  const pd = pr ? '4s' : `${1.8 / spd}s`
 
-  // waveform for SVG (listening / speaking)
-  const waveX0 = r - size * 0.18
-  const waveBarW = (size * 0.36) / (WAVE_H.length * 2 - 1)
-  const waveMaxH = size * 0.06
+  // Opacity helper
+  const o = (base: number) => Math.min(1, base * (0.45 + i * 0.65))
+
+  // Font sizes
+  const fM = Math.max(11, size * 0.086)
+  const fS = Math.max(7,  size * 0.044)
+
+  const showWave    = (key === 'listening' || key === 'speaking') && !pr
+  const showScan    = (key === 'processing' || key === 'working') && !pr
+  const showConnArc = key === 'connecting'
 
   return (
-    <div style={{ position:'relative', width:size, height:size, flexShrink:0 }}
-      role="img" aria-label={`JARVIS - ${cfgKey}`}>
-
-      {/* ── keyframes ── */}
+    <div style={{ position:'relative', width:W, height:H, flexShrink:0 }}>
       <style>{`
-        @keyframes hk-cw   { to { transform:rotate(360deg); } }
-        @keyframes hk-ccw  { to { transform:rotate(-360deg); } }
-        @keyframes hk-pulse{ 0%,100%{opacity:.55;transform:scale(.97)} 50%{opacity:1;transform:scale(1.03)} }
-        @keyframes hk-glow { 0%,100%{opacity:.65} 50%{opacity:1} }
-        @keyframes hk-dot  { 0%,100%{opacity:.1;transform:scale(.5)} 50%{opacity:1;transform:scale(1.1)} }
-        @keyframes hk-scan { to { transform:rotate(360deg); } }
-        @keyframes hk-arc  { 0%,100%{opacity:.25;stroke-dashoffset:0} 50%{opacity:.9;stroke-dashoffset:-20} }
-        @keyframes hk-wave { 0%{transform:scaleY(.2)} 100%{transform:scaleY(1)} }
-        @keyframes hk-err  { 0%,100%{opacity:1} 50%{opacity:.25} }
-        @keyframes hk-tri  { 0%,100%{opacity:.4} 50%{opacity:1} }
-        @media(prefers-reduced-motion:reduce){
-          [class*="hk-"]{animation-duration:40s!important}
-        }
+        @keyframes j-cw   { to { transform:rotate( 360deg); } }
+        @keyframes j-ccw  { to { transform:rotate(-360deg); } }
+        @keyframes j-pu   { 0%,100%{opacity:.48;transform:scale(.963)} 50%{opacity:1;transform:scale(1.037)} }
+        @keyframes j-gl   { 0%,100%{opacity:.45} 50%{opacity:1} }
+        @keyframes j-dot  { 0%,100%{opacity:.06;transform:scale(.35)} 50%{opacity:.92;transform:scale(1.12)} }
+        @keyframes j-sc   { to { transform:rotate(360deg); } }
+        @keyframes j-bm   { 0%,100%{opacity:.25} 50%{opacity:.90} }
+        @keyframes j-wv   { 0%{transform:scaleY(.12)} 100%{transform:scaleY(1)} }
+        @keyframes j-er   { 0%,100%{opacity:1} 50%{opacity:.18} }
+        @keyframes j-ca   { 0%,100%{opacity:.22;stroke-dashoffset:0} 50%{opacity:.85;stroke-dashoffset:-45} }
       `}</style>
 
-      {/* ── 背景radial ambient glow ── */}
-      <div style={{
-        position:'absolute', inset:'-30%', borderRadius:'50%',
-        background: `radial-gradient(ellipse at center, ${cfg.glowColor} 0%, ${cfg.glowStrong} 35%, transparent 70%)`,
-        pointerEvents:'none',
-        animation:`hk-glow ${cfg.pulseDur} ease-in-out infinite`,
-      }}/>
-
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{overflow:'visible', position:'relative', zIndex:1}}>
+      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ overflow:'visible', display:'block' }}>
         <defs>
-          {/* inner core gradient */}
-          <radialGradient id={`hk-core-${size}`} cx="50%" cy="45%" r="55%">
-            <stop offset="0%"   stopColor={isErr ? '#1a0000' : '#0a0800'} />
-            <stop offset="60%"  stopColor={isErr ? '#0d0000' : '#060500'} />
-            <stop offset="100%" stopColor="#020201" />
+          <radialGradient id={`jcg${size}`} cx="50%" cy="43%" r="56%">
+            <stop offset="0%"  stopColor={key==='working'?'#150022':key==='speaking'?'#001a0a':key==='connecting'?'#00101e':key==='error'?'#1a0000':'#0c0900'}/>
+            <stop offset="100%" stopColor="#020201"/>
           </radialGradient>
-          {/* inner glow ring gradient */}
-          <radialGradient id={`hk-glow-${size}`} cx="50%" cy="50%" r="50%">
-            <stop offset="0%"   stopColor={rCB} stopOpacity={cfg.innerBright ? 0.30 : 0.10} />
-            <stop offset="100%" stopColor={rC}  stopOpacity="0" />
+          <radialGradient id={`jig${size}`} cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor={p} stopOpacity={i*0.28}/>
+            <stop offset="100%" stopColor={p} stopOpacity="0"/>
           </radialGradient>
+          <radialGradient id={`jag${size}`} cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor={p} stopOpacity={i*0.16}/>
+            <stop offset="100%" stopColor={p} stopOpacity="0"/>
+          </radialGradient>
+          <linearGradient id={`jbt${size}`} gradientUnits="userSpaceOnUse" x1="0" y1={bT1} x2="0" y2={bT2}>
+            <stop offset="0%"   stopColor={p} stopOpacity=".08"/>
+            <stop offset="50%"  stopColor={b} stopOpacity={i*.88}/>
+            <stop offset="100%" stopColor={p} stopOpacity=".18"/>
+          </linearGradient>
+          <linearGradient id={`jbb${size}`} gradientUnits="userSpaceOnUse" x1="0" y1={bB1} x2="0" y2={bB2}>
+            <stop offset="0%"   stopColor={p} stopOpacity=".18"/>
+            <stop offset="50%"  stopColor={b} stopOpacity={i*.88}/>
+            <stop offset="100%" stopColor={p} stopOpacity=".08"/>
+          </linearGradient>
+          <filter id={`jfb${size}`}><feGaussianBlur stdDeviation="3.5"/></filter>
+          <filter id={`jfs${size}`}><feGaussianBlur stdDeviation="1.8"/></filter>
+          <filter id={`jfg${size}`}>
+            <feGaussianBlur stdDeviation="4.5" result="glow"/>
+            <feMerge><feMergeNode in="glow"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
         </defs>
 
-        {/* ── Layer 1: 最外周 radar thin ring ── */}
-        <g style={{transformOrigin:`${r}px ${r}px`, animation:`hk-cw ${spd(sA)} linear infinite`}}>
-          <circle cx={r} cy={r} r={r*0.970} fill="none" stroke={rCSoft} strokeWidth="0.4" strokeDasharray="2 8" opacity={oA*0.6}/>
+        {/* ── Ambient background ── */}
+        <ellipse cx={cx} cy={hudY} rx={R*1.55} ry={R*1.12}
+          fill={`url(#jag${size})`}
+          style={{animation:`j-gl ${pd} ease-in-out infinite`}}/>
+
+        {/* ════ TOP HOLOGRAM EMITTER ════ */}
+        <ellipse cx={cx} cy={tY} rx={tRx} ry={tRy}
+          fill="none" stroke={p} strokeWidth=".4" strokeDasharray="2 9" opacity={o(.38)}/>
+        <g style={{transformOrigin:`${cx}px ${tY}px`,animation:`j-ccw ${d(25)} linear infinite`}}>
+          <ellipse cx={cx} cy={tY} rx={tRx*.82} ry={tRy*.82}
+            fill="none" stroke={p} strokeWidth=".7" strokeDasharray="22 7 4 7" opacity={o(.55)}/>
+        </g>
+        <g style={{transformOrigin:`${cx}px ${tY}px`,animation:`j-cw ${d(16)} linear infinite`}}>
+          <ellipse cx={cx} cy={tY} rx={tRx*.60} ry={tRy*.60}
+            fill="none" stroke={b} strokeWidth="1.3" strokeDasharray="14 5" opacity={o(.72)}
+            filter={i>.55?`url(#jfs${size})`:'none'}/>
+        </g>
+        <g style={{transformOrigin:`${cx}px ${tY}px`,animation:`j-ccw ${d(10)} linear infinite`}}>
+          <ellipse cx={cx} cy={tY} rx={tRx*.38} ry={tRy*.38}
+            fill="none" stroke={b} strokeWidth="2" opacity={o(.82)}
+            filter={`url(#jfs${size})`}/>
+        </g>
+        {/* Top center emitter */}
+        <ellipse cx={cx} cy={tY} rx={tRx*.18} ry={tRy*.18}
+          fill={b} opacity={i*.50} filter={`url(#jfb${size})`}
+          style={{animation:`j-gl ${pd} ease-in-out infinite`}}/>
+        <circle cx={cx} cy={tY} r={2.8}
+          fill={b} opacity={i*.90} filter={`url(#jfg${size})`}
+          style={{animation:`j-gl ${pd} ease-in-out .3s infinite`}}/>
+
+        {/* ════ TOP BEAM ════ */}
+        <line x1={cx} y1={bT1} x2={cx} y2={bT2}
+          stroke={p} strokeWidth="9" opacity={i*.25}
+          filter={`url(#jfb${size})`}
+          style={{animation:`j-bm ${pd} ease-in-out infinite`}}/>
+        <line x1={cx} y1={bT1} x2={cx} y2={bT2}
+          stroke={`url(#jbt${size})`} strokeWidth="1.6"
+          style={{animation:`j-bm ${pd} ease-in-out .2s infinite`}}/>
+        <line x1={cx} y1={bT1} x2={cx} y2={bT2}
+          stroke={b} strokeWidth=".6" opacity={i*.72}
+          style={{animation:`j-bm ${pd} ease-in-out .1s infinite`}}/>
+
+        {/* ════ CENTRAL HUD RINGS (10 layers) ════ */}
+
+        {/* L1: Outermost radar (very slow CW) */}
+        <g style={{transformOrigin:`${cx}px ${hudY}px`,animation:`j-cw ${d(42)} linear infinite`}}>
+          <circle cx={cx} cy={hudY} r={R*.982} fill="none" stroke={p}
+            strokeWidth=".4" strokeDasharray="2 11" opacity={o(.33)}/>
         </g>
 
-        {/* ── Layer 2: tick marks ring（静的）── */}
-        {TICKS.map(({a, major},i)=>{
-          const ro=r*0.955, ri=r*(major?0.930:0.945)
-          return <line key={i}
-            x1={r+Math.cos(a)*ri} y1={r+Math.sin(a)*ri}
-            x2={r+Math.cos(a)*ro} y2={r+Math.sin(a)*ro}
-            stroke={rC} strokeWidth={major?1.2:0.5} opacity={major?oA*0.55:oA*0.22}/>
+        {/* Tick marks 36 (static) */}
+        {Array.from({length:36},(_,ii)=>{
+          const a=(ii*10*Math.PI)/180, mj=ii%6===0
+          const r1=R*(mj?.888:.910), r2=R*.955
+          return <line key={ii}
+            x1={cx+Math.cos(a)*r1} y1={hudY+Math.sin(a)*r1}
+            x2={cx+Math.cos(a)*r2} y2={hudY+Math.sin(a)*r2}
+            stroke={p} strokeWidth={mj?1.1:.45} opacity={mj?o(.44):o(.18)}/>
         })}
 
-        {/* ── Layer 3: segment outer ring ── */}
-        <g style={{transformOrigin:`${r}px ${r}px`, animation:`hk-ccw ${spd(sA)} linear infinite`}}>
-          <circle cx={r} cy={r} r={r*0.910} fill="none" stroke={rC} strokeWidth="0.8" strokeDasharray="22 6 5 6" opacity={oA}/>
+        {/* L2: Outer segment ring (CCW) */}
+        <g style={{transformOrigin:`${cx}px ${hudY}px`,animation:`j-ccw ${d(30)} linear infinite`}}>
+          <circle cx={cx} cy={hudY} r={R*.928} fill="none" stroke={p}
+            strokeWidth=".8" strokeDasharray="26 8 5 8" opacity={o(.52)}/>
+          <polygon points={`${cx},${hudY-R*.928-3.5} ${cx-3.5},${hudY-R*.928+2} ${cx+3.5},${hudY-R*.928+2}`}
+            fill={p} opacity={o(.72)}/>
         </g>
 
-        {/* ── Layer 4: broken arc ring ── */}
-        <g style={{transformOrigin:`${r}px ${r}px`, animation:`hk-cw ${spd(sB)} linear infinite`}}>
-          <circle cx={r} cy={r} r={r*0.865} fill="none" stroke={rCB} strokeWidth="1.2" strokeDasharray="55 12 8 12 30 12" opacity={oB}/>
-          {/* triangle marker */}
-          <polygon points={`${r},${r*0.12} ${r-3.5},${r*0.148} ${r+3.5},${r*0.148}`} fill={rCB} opacity={oB}/>
+        {/* L3: Broken arc (CW) */}
+        <g style={{transformOrigin:`${cx}px ${hudY}px`,animation:`j-cw ${d(20)} linear infinite`}}>
+          <circle cx={cx} cy={hudY} r={R*.876} fill="none" stroke={b}
+            strokeWidth="1.3" strokeDasharray="52 15 10 15 26 15" opacity={o(.65)}
+            filter={i>.65?`url(#jfs${size})`:'none'}/>
         </g>
 
-        {/* ── Layer 5: medium segmented ring ── */}
-        <g style={{transformOrigin:`${r}px ${r}px`, animation:`hk-ccw ${spd(sB)} linear infinite`}}>
-          <circle cx={r} cy={r} r={r*0.820} fill="none" stroke={rC} strokeWidth="1.5" strokeDasharray="18 5 6 5" opacity={oB}/>
+        {/* L4: Medium CCW */}
+        <g style={{transformOrigin:`${cx}px ${hudY}px`,animation:`j-ccw ${d(24)} linear infinite`}}>
+          <circle cx={cx} cy={hudY} r={R*.826} fill="none" stroke={p}
+            strokeWidth="1.5" strokeDasharray="20 6 6 6" opacity={o(.58)}/>
         </g>
 
-        {/* ── CONNECTING: dashed orbit arc ── */}
-        {cfg.connectingArc && (
-          <circle cx={r} cy={r} r={r*0.76} fill="none" stroke={C.amber}
-            strokeWidth="1.5" strokeDasharray="30 15" opacity="0.7"
-            style={{animation:`hk-arc 1.4s ease-in-out infinite`, transformOrigin:`${r}px ${r}px`}}/>
-        )}
-
-        {/* ── Layer 6: inner segmented ring ── */}
-        <g style={{transformOrigin:`${r}px ${r}px`, animation:`hk-cw ${spd(sC)} linear infinite`}}>
-          <circle cx={r} cy={r} r={r*0.758} fill="none" stroke={rCB} strokeWidth="1.8" strokeDasharray="40 8 10 8 20 8" opacity={oC}/>
+        {/* L5: Technical segment CW with dots */}
+        <g style={{transformOrigin:`${cx}px ${hudY}px`,animation:`j-cw ${d(15)} linear infinite`}}>
+          <circle cx={cx} cy={hudY} r={R*.776} fill="none" stroke={b}
+            strokeWidth="1.8" strokeDasharray="42 10 8 10 22 10" opacity={o(.70)}
+            filter={i>.5?`url(#jfs${size})`:'none'}/>
+          {[0,120,240].map((deg,di)=>{
+            const a=(deg*Math.PI)/180
+            return <circle key={di} cx={cx+Math.cos(a)*R*.776} cy={hudY+Math.sin(a)*R*.776}
+              r="2.5" fill={b} opacity={o(.82)}/>
+          })}
         </g>
 
-        {/* ── Layer 7: counter ring ── */}
-        <g style={{transformOrigin:`${r}px ${r}px`, animation:`hk-ccw ${spd(sC)} linear infinite`}}>
-          <circle cx={r} cy={r} r={r*0.710} fill="none" stroke={rC} strokeWidth="1.0" strokeDasharray="12 4" opacity={oC*0.7}/>
+        {/* L6: Inner CCW fine */}
+        <g style={{transformOrigin:`${cx}px ${hudY}px`,animation:`j-ccw ${d(18)} linear infinite`}}>
+          <circle cx={cx} cy={hudY} r={R*.722} fill="none" stroke={p}
+            strokeWidth="1.0" strokeDasharray="14 5" opacity={o(.54)}/>
         </g>
 
-        {/* ── Layer 8: bright inner solid ring ── */}
-        <circle cx={r} cy={r} r={r*0.660} fill="none"
-          stroke={cfg.innerBright ? rCB : rCSoft}
-          strokeWidth={cfg.innerBright ? 3.0 : 1.5}
-          opacity={oD}
-          style={{
-            filter: cfg.innerBright ? `drop-shadow(0 0 ${size*0.018}px ${rCB}) drop-shadow(0 0 ${size*0.008}px ${C.goldBright})` : 'none',
-            animation:`hk-glow ${cfg.pulseDur} ease-in-out infinite`,
-          }}/>
-
-        {/* ── Layer 9: glow ring (soft) ── */}
-        <circle cx={r} cy={r} r={r*0.610} fill="none"
-          stroke={isErr ? C.error : rCB}
-          strokeWidth={cfg.innerBright ? 6 : 3}
-          opacity={cfg.innerBright ? 0.18 : 0.07}
-          style={{animation:`hk-pulse ${cfg.pulseDur} ease-in-out infinite`}}/>
-
-        {/* ── Layer 10: HUD radial lines (6本) ── */}
-        {[0,60,120,180,240,300].map((deg,i)=>{
-          const rad=(deg*Math.PI)/180
-          return <line key={i}
-            x1={r+Math.cos(rad)*r*0.60} y1={r+Math.sin(rad)*r*0.60}
-            x2={r+Math.cos(rad)*r*0.42} y2={r+Math.sin(rad)*r*0.42}
-            stroke={rC} strokeWidth="0.5" opacity={oC*0.40}/>
-        })}
-
-        {/* ── Core background ── */}
-        <circle cx={r} cy={r} r={r*0.390} fill={`url(#hk-core-${size})`}/>
-
-        {/* ── Core inner glow fill ── */}
-        <circle cx={r} cy={r} r={r*0.370} fill={`url(#hk-glow-${size})`}
-          style={{animation:`hk-pulse ${cfg.pulseDur} ease-in-out infinite`}}/>
-
-        {/* ── THINKING / WORKING: Scanner line ── */}
-        {cfg.scannerOn && !pr && (
-          <g style={{transformOrigin:`${r}px ${r}px`, animation:`hk-scan 1.8s linear infinite`}}>
-            <line x1={r} y1={r} x2={r} y2={r*0.28} stroke={rCB} strokeWidth="0.7" opacity="0.65"/>
-            <circle cx={r} cy={r*0.30} r="2.2" fill={rCB} opacity="0.9"/>
+        {/* CONNECTING: special orbit arc */}
+        {showConnArc && (
+          <g style={{transformOrigin:`${cx}px ${hudY}px`,animation:`j-cw ${d(11)} linear infinite`}}>
+            <circle cx={cx} cy={hudY} r={R*.668} fill="none"
+              stroke={b} strokeWidth="2.2" strokeDasharray="22 11" opacity="0.78"
+              style={{animation:`j-ca 1.6s ease-in-out infinite`}}/>
           </g>
         )}
 
-        {/* ── Particles ── */}
-        {DOTS.map(({a,rr},i)=>{
-          const rad=(a*Math.PI)/180
-          const delay=`${(i*0.25)%2.8}s`
-          return <circle key={i}
-            cx={r+Math.cos(rad)*r*rr} cy={r+Math.sin(rad)*r*rr}
-            r={i%3===0 ? 2.2 : 1.4}
-            fill={rC}
-            style={{
-              animation:`hk-dot ${cfg.pulseDur} ease-in-out ${delay} infinite`,
-              opacity: cfg.particleOpa,
-            }}/>
-        })}
-
-        {/* ── ERROR triangle icon ── */}
-        {isErr && (
-          <text x={r} y={r+size*0.10} textAnchor="middle" fill={C.error}
-            fontSize={size*0.075} fontFamily="monospace"
-            style={{animation:`hk-tri ${cfg.pulseDur} ease-in-out infinite`, userSelect:'none'}}>
-            ⚠
-          </text>
+        {/* THINKING / WORKING: Scanner */}
+        {showScan && (
+          <g style={{transformOrigin:`${cx}px ${hudY}px`,animation:`j-sc ${d(3.2)} linear infinite`}}>
+            <line x1={cx} y1={hudY-R*.62} x2={cx} y2={hudY-R*.08}
+              stroke={b} strokeWidth=".9" opacity=".72"/>
+            <circle cx={cx} cy={hudY-R*.62} r="3.2" fill={b} opacity=".92"/>
+            <path d={`M${cx} ${hudY} L${cx} ${hudY-R*.62} A${R*.62} ${R*.62} 0 0 1 ${cx+Math.sin(.38)*R*.62} ${hudY-Math.cos(.38)*R*.62}`}
+              fill={p} opacity=".10"/>
+          </g>
         )}
 
-        {/* ── Waveform (LISTENING / SPEAKING) ── */}
-        {cfg.waveActive && !pr && WAVE_H.map((h,i)=>{
-          const x = waveX0 + i * waveBarW * 2
-          const barH = h * waveMaxH
-          const y1 = r + barH / 2
-          return (
-            <rect key={i}
-              x={x} y={y1 - barH}
-              width={Math.max(1.5, waveBarW - 1)} height={barH}
-              rx="1" fill={rCB} opacity="0.85"
-              style={{
-                transformOrigin:`${x}px ${y1}px`,
-                animation:`hk-wave ${0.4 + i * 0.08}s ease-in-out ${i * 0.06}s infinite alternate`,
-              }}/>
-          )
+        {/* L7: Bright energy ring (glow) */}
+        <circle cx={cx} cy={hudY} r={R*.660} fill="none"
+          stroke={b} strokeWidth={i>.6?3.8:2.2} opacity={o(.84)}
+          filter={i>.45?`url(#jfg${size})`:'none'}
+          style={{animation:`j-gl ${pd} ease-in-out infinite`}}/>
+
+        {/* L8: Soft glow fill ring */}
+        <circle cx={cx} cy={hudY} r={R*.605} fill="none"
+          stroke={p} strokeWidth={i>.6?12:6} opacity={i*.20}
+          style={{animation:`j-pu ${pd} ease-in-out infinite`}}/>
+
+        {/* L9: HUD radial spokes */}
+        {[30,90,150,210,270,330].map((deg,di)=>{
+          const a=(deg*Math.PI)/180
+          return <line key={di}
+            x1={cx+Math.cos(a)*R*.58} y1={hudY+Math.sin(a)*R*.58}
+            x2={cx+Math.cos(a)*R*.41} y2={hudY+Math.sin(a)*R*.41}
+            stroke={p} strokeWidth=".5" opacity={o(.33)}/>
         })}
 
-        {/* ── Center text: main label ── */}
-        <text x={r} y={r - (isErr ? fMain * 1.2 : fSub * 0.5)}
+        {/* L10: Core */}
+        <circle cx={cx} cy={hudY} r={R*.388} fill={`url(#jcg${size})`}/>
+        <circle cx={cx} cy={hudY} r={R*.368} fill={`url(#jig${size})`}
+          style={{animation:`j-pu ${pd} ease-in-out infinite`}}/>
+
+        {/* Waveform */}
+        {showWave && (() => {
+          const n=WAVE.length, tw=R*.56, bw=tw/(n*2-1), mh=R*.128, sx=cx-tw/2
+          return WAVE.map((h,wi)=>{
+            const x=sx+wi*bw*2, bh=h*mh
+            return <rect key={wi} x={x} y={hudY+bh/2} width={Math.max(1.5,bw-1)} height={bh} rx="1"
+              fill={b} opacity=".82"
+              style={{transformOrigin:`${x}px ${hudY+bh/2}px`,
+                animation:`j-wv ${.36+wi*.07}s ease-in-out ${wi*.055}s infinite alternate`}}/>
+          })
+        })()}
+
+        {/* Error icon */}
+        {isErr && (
+          <text x={cx} y={hudY+R*.18} textAnchor="middle"
+            fill={b} fontSize={R*.22} fontFamily="monospace" opacity=".9"
+            style={{animation:`j-er .9s ease-in-out infinite`,userSelect:'none'}}>⚠</text>
+        )}
+
+        {/* Center text: JARVIS */}
+        <text x={cx} y={hudY-(showWave?R*.24:isErr?R*.24:R*.08)}
           textAnchor="middle" dominantBaseline="middle"
-          fill={tMain} fontSize={fMain}
-          fontWeight="900" letterSpacing="0.14em"
-          fontFamily="'Courier New',Courier,monospace"
-          opacity="0.98"
-          style={{
-            filter: cfg.innerBright
-              ? `drop-shadow(0 0 ${fMain*0.4}px ${tMain})`
-              : 'none',
-            userSelect:'none',
-            animation: isErr ? `hk-err ${cfg.pulseDur} ease-in-out infinite` : undefined,
-          }}>
-          {label.main}
+          fill={b} fontSize={fM} fontWeight="900"
+          letterSpacing=".16em" fontFamily="'Courier New',Courier,monospace"
+          opacity=".96"
+          style={{filter:i>.48?`drop-shadow(0 0 ${fM*.32}px ${b})`:'none',
+            animation:isErr?`j-er .9s ease-in-out infinite`:undefined,
+            userSelect:'none'}}>
+          {lM}
         </text>
 
-        {/* ── Center text: sub label ── */}
-        {!isErr && (
-          <text x={r} y={r + fMain * 0.72}
-            textAnchor="middle" dominantBaseline="middle"
-            fill={tSub} fontSize={fSub}
-            letterSpacing="0.10em"
-            fontFamily="'Courier New',Courier,monospace"
-            opacity="0.65"
-            style={{userSelect:'none'}}>
-            {label.sub}
-          </text>
-        )}
+        {/* Center text: state */}
+        <text x={cx} y={hudY+(showWave?R*.04:R*.18)}
+          textAnchor="middle" dominantBaseline="middle"
+          fill={p} fontSize={fS} letterSpacing=".13em"
+          fontFamily="'Courier New',Courier,monospace" opacity=".78"
+          style={{userSelect:'none'}}>
+          {lS}
+        </text>
 
-        {/* ── IDLE dots below sub ── */}
-        {cfgKey === 'idle' && (
-          <text x={r} y={r + fMain * 0.72 + fSub * 1.5}
-            textAnchor="middle" fill={C.goldDim} fontSize={fSub * 0.8}
-            letterSpacing="0.20em" fontFamily="monospace" opacity="0.40"
-            style={{userSelect:'none'}}>
+        {/* Idle dots */}
+        {key==='idle' && (
+          <text x={cx} y={hudY+R*.30} textAnchor="middle"
+            fill={p} fontSize={fS*.68} letterSpacing=".24em"
+            fontFamily="monospace" opacity=".32" style={{userSelect:'none'}}>
             · · · · ·
           </text>
         )}
-      </svg>
 
-      {/* ── CSS box-shadow glow overlay ── */}
-      <div style={{
-        position:'absolute', inset:0, borderRadius:'50%',
-        boxShadow: glowBox,
-        pointerEvents:'none', zIndex:2,
-        animation:`hk-glow ${cfg.pulseDur} ease-in-out infinite`,
-      }}/>
+        {/* Particles */}
+        {DOTS.map(([angle,rr],pi)=>{
+          const a=(angle*Math.PI)/180, delay=`${(pi*.18)%2.8}s`
+          return <circle key={pi}
+            cx={cx+Math.cos(a)*R*rr} cy={hudY+Math.sin(a)*R*rr}
+            r={pi%4===0?2.1:pi%3===0?1.6:1.2} fill={p}
+            style={{animation:`j-dot ${pd} ease-in-out ${delay} infinite`,opacity:i*.65}}/>
+        })}
+
+        {/* ════ BOTTOM BEAM ════ */}
+        <line x1={cx} y1={bB1} x2={cx} y2={bB2}
+          stroke={p} strokeWidth="9" opacity={i*.25}
+          filter={`url(#jfb${size})`}
+          style={{animation:`j-bm ${pd} ease-in-out .4s infinite`}}/>
+        <line x1={cx} y1={bB1} x2={cx} y2={bB2}
+          stroke={`url(#jbb${size})`} strokeWidth="1.6"
+          style={{animation:`j-bm ${pd} ease-in-out .5s infinite`}}/>
+        <line x1={cx} y1={bB1} x2={cx} y2={bB2}
+          stroke={b} strokeWidth=".6" opacity={i*.68}
+          style={{animation:`j-bm ${pd} ease-in-out .3s infinite`}}/>
+
+        {/* ════ BOTTOM HOLOGRAM PROJECTOR ════ */}
+        <ellipse cx={cx} cy={bY} rx={bRx} ry={bRy}
+          fill="none" stroke={p} strokeWidth=".5" strokeDasharray="3 10" opacity={o(.38)}/>
+        <g style={{transformOrigin:`${cx}px ${bY}px`,animation:`j-cw ${d(34)} linear infinite`}}>
+          <ellipse cx={cx} cy={bY} rx={bRx*.84} ry={bRy*.84}
+            fill="none" stroke={p} strokeWidth=".8" strokeDasharray="28 10 6 10" opacity={o(.55)}/>
+        </g>
+        <g style={{transformOrigin:`${cx}px ${bY}px`,animation:`j-ccw ${d(22)} linear infinite`}}>
+          <ellipse cx={cx} cy={bY} rx={bRx*.66} ry={bRy*.66}
+            fill="none" stroke={b} strokeWidth="1.5" strokeDasharray="20 7" opacity={o(.68)}
+            filter={i>.55?`url(#jfs${size})`:'none'}/>
+        </g>
+        <g style={{transformOrigin:`${cx}px ${bY}px`,animation:`j-cw ${d(15)} linear infinite`}}>
+          <ellipse cx={cx} cy={bY} rx={bRx*.46} ry={bRy*.46}
+            fill="none" stroke={b} strokeWidth="2.2" strokeDasharray="12 4" opacity={o(.80)}
+            filter={`url(#jfg${size})`}/>
+        </g>
+        <g style={{transformOrigin:`${cx}px ${bY}px`,animation:`j-ccw ${d(9)} linear infinite`}}>
+          <ellipse cx={cx} cy={bY} rx={bRx*.28} ry={bRy*.28}
+            fill="none" stroke={b} strokeWidth="3.0" opacity={o(.88)}
+            filter={`url(#jfg${size})`}/>
+        </g>
+        {/* Bottom center emitter */}
+        <ellipse cx={cx} cy={bY} rx={bRx*.14} ry={bRy*.14}
+          fill={b} opacity={i*.55} filter={`url(#jfb${size})`}
+          style={{animation:`j-gl ${pd} ease-in-out infinite`}}/>
+        <circle cx={cx} cy={bY} r={3.8} fill={b} opacity={i*.92}
+          filter={`url(#jfg${size})`}
+          style={{animation:`j-gl ${pd} ease-in-out .4s infinite`}}/>
+        {/* Ground ambient */}
+        <ellipse cx={cx} cy={bY+bRy*.6} rx={bRx*1.15} ry={bRy*.9}
+          fill={p} opacity={i*.07} filter={`url(#jfb${size})`}/>
+      </svg>
     </div>
   )
 }
