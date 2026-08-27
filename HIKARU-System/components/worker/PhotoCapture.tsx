@@ -39,11 +39,13 @@ export function PhotoCapture({
     reader.readAsDataURL(file)
 
     setCapturing(true)
-    await onCapture(file)
-    setCapturing(false)
-
-    // Reset input so same file can be re-selected
-    e.target.value = ''
+    try {
+      await onCapture(file)
+    } finally {
+      // onCapture hang / throw どちらでもspinnerを確実に解除する
+      setCapturing(false)
+      e.target.value = ''
+    }
   }
 
   function handleRetake() {

@@ -53,6 +53,49 @@ const TYPE_PRIORITY: Record<string, number> = {
   note: 0, faq: 1, text: 2, pdf: 3, image: 4, video: 5,
 }
 
+// ============================================================
+// Chat RAG: コンテキスト上限定数（BUG A: 612K overflow fix）
+// ============================================================
+const CHAT_MANUAL_ITEM_MAX_CHARS    = 2_000   // 1 Manual あたりのcontent文字数上限
+const CHAT_MANUAL_TOP_K_PER_TIER   = 5       // 1 tier あたりのManual件数上限
+const CHAT_MANUAL_CONTEXT_MAX_CHARS = 60_000  // 全Manual合計文字数上限（≈15,000 tokens）
+const CHAT_HISTORY_MAX_CHARS        = 20_000  // History合計文字数上限（安全バッファ）
+
+/** Chat RAG: questionとのキーワード関連度スコア（AI callなし・deterministic） */
+function scoreChatManual(manual: ManualItem, question: string): number {
+  const base = 10 - (TYPE_PRIORITY[manual.type] ?? 9)  // type優先度
+  if (!question.trim()) return base
+
+  const q     = question.toLowerCase()
+  const title = (manual.title ?? '').toLowerCase()
+  const excerpt = (manual.content ?? '').slice(0, 300).toLowerCase()
+
+  let score = base
+  const words = q.split(/[\s・、。！？\n]+/).filter((w) => w.length >= 2)
+  for (const w of words) {
+    if (title.includes(w)) score += 10  // タイトル一致を最重視
+    if (excerpt.includes(w)) score += 3  // 冒頭300文字一致
+  }
+  return score
+}
+
+/** Chat RAG: per-item cap + TopK + relevance sort を適用したsectionビルダー */
+function buildBoundedSection(items: ManualItem[], question: string): string {
+  const scored = items
+    .filter((m) => m.content?.trim() || m.file_url)
+    .map((m) => ({ m, score: scoreChatManual(m, question) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, CHAT_MANUAL_TOP_K_PER_TIER)
+
+  return scored.map(({ m }) => {
+    const label = TYPE_LABEL[m.type] ?? m.type
+    let block = `【${label}】「${m.title}」`
+    if (m.content) block += `\n${m.content.trim().slice(0, CHAT_MANUAL_ITEM_MAX_CHARS)}`
+    if (m.file_url) block += `\n（参考ファイル: ${m.file_url}）`
+    return block
+  }).join('\n\n────────────────\n\n')
+}
+
 export function buildManualContext(manuals: ManualItem[]): string {
   if (manuals.length === 0) return '（マニュアルが登録されていません）'
 
@@ -98,8 +141,11 @@ function buildSection(items: ManualItem[]): string {
 /**
  * Project > Company > Global の優先順位を明示したコンテキスト文字列を生成。
  * AIへ渡すプロンプト内埋め込み用。
+ *
+ * question を渡すと関連度スコアでソートしTopKを選択。
+ * per-item cap + total cap で 612K overflow を防止。
  */
-export function buildScopedManualContext(scoped: ScopedManuals): string {
+export function buildScopedManualContext(scoped: ScopedManuals, question = ''): string {
   const hasProject = scoped.project.length > 0
   const hasCompany = scoped.company.length > 0
   const hasGlobal  = scoped.global.length > 0
@@ -111,30 +157,40 @@ export function buildScopedManualContext(scoped: ScopedManuals): string {
   const parts: string[] = []
 
   if (hasProject) {
-    parts.push(
-      '═══ 優先度1: 案件固有マニュアル（必ず最優先） ═══\n' +
-      '（他のマニュアルと矛盾する場合は必ずこちらを優先してください）\n\n' +
-      buildSection(scoped.project)
-    )
+    const section = buildBoundedSection(scoped.project, question)
+    if (section) {
+      parts.push(
+        '═══ 優先度1: 案件固有マニュアル（必ず最優先） ═══\n' +
+        '（他のマニュアルと矛盾する場合は必ずこちらを優先してください）\n\n' +
+        section
+      )
+    }
   }
 
   if (hasCompany) {
-    parts.push(
-      '═══ 優先度2: 会社共通マニュアル ═══\n' +
-      '（案件固有の指示がない事項について参照してください）\n\n' +
-      buildSection(scoped.company)
-    )
+    const section = buildBoundedSection(scoped.company, question)
+    if (section) {
+      parts.push(
+        '═══ 優先度2: 会社共通マニュアル ═══\n' +
+        '（案件固有の指示がない事項について参照してください）\n\n' +
+        section
+      )
+    }
   }
 
   if (hasGlobal) {
-    parts.push(
-      '═══ 優先度3: HIKARU標準マニュアル ═══\n' +
-      '（案件・会社マニュアルで確認できない場合のみ参照してください）\n\n' +
-      buildSection(scoped.global)
-    )
+    const section = buildBoundedSection(scoped.global, question)
+    if (section) {
+      parts.push(
+        '═══ 優先度3: HIKARU標準マニュアル ═══\n' +
+        '（案件・会社マニュアルで確認できない場合のみ参照してください）\n\n' +
+        section
+      )
+    }
   }
 
-  return parts.join('\n\n')
+  // Total context cap（全体上限）
+  return parts.join('\n\n').slice(0, CHAT_MANUAL_CONTEXT_MAX_CHARS)
 }
 
 /** scoped manuals の全アイテムをフラット化（extractSources用） */
@@ -223,16 +279,26 @@ export async function* generateScopedManualReplyStream(
   chatHistory: ChatMessage[],
   scoped: ScopedManuals,
 ): AsyncGenerator<string, void, unknown> {
-  const openai   = createOpenAIClient()
-  const context  = buildScopedManualContext(scoped)
-  const hasAny   = scoped.project.length + scoped.company.length + scoped.global.length > 0
+  const openai  = createOpenAIClient()
+  // questionを渡してrelevance-sortedかつboundedなcontextを構築
+  const context = buildScopedManualContext(scoped, question)
+  const hasAny  = scoped.project.length + scoped.company.length + scoped.global.length > 0
+
+  // History: 10件制限 + 文字数上限（安全バッファ）
+  const historyItems = chatHistory.slice(-10).map((m) => ({
+    role:    m.role as 'user' | 'assistant',
+    content: m.content.slice(0, 2_000),  // 1メッセージあたり2,000文字上限
+  }))
+  // 全History合計cap（超過分を古い順から除外）
+  let historyChars = historyItems.reduce((s, m) => s + m.content.length, 0)
+  while (historyChars > CHAT_HISTORY_MAX_CHARS && historyItems.length > 0) {
+    const removed = historyItems.shift()!
+    historyChars -= removed.content.length
+  }
 
   const messages = [
     { role: 'system' as const, content: MANUAL_SYSTEM_PROMPT },
-    ...chatHistory.slice(-10).map((m) => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content,
-    })),
+    ...historyItems,
     {
       role: 'user' as const,
       content: hasAny
@@ -240,6 +306,17 @@ export async function* generateScopedManualReplyStream(
         : MANUAL_USER_PROMPT(question, '（マニュアルが登録されていません）'),
     },
   ]
+
+  // 最終安全budget（日本語は2 chars ≈ 1 token）
+  const estimatedTokens = JSON.stringify(messages).length / 2
+  if (estimatedTokens > 100_000) {
+    // Contextをさらに縮小してリトライ
+    const safeContext = context.slice(0, 20_000)
+    const lastMsg = messages[messages.length - 1]
+    lastMsg.content = hasAny
+      ? SCOPED_MANUAL_USER_PROMPT(question, safeContext)
+      : MANUAL_USER_PROMPT(question, '（マニュアルが登録されていません）')
+  }
 
   const stream = await openai.chat.completions.create({
     model:       OPENAI_MODELS.CHAT,

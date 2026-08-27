@@ -11,8 +11,10 @@ export interface PhotoRow {
 }
 
 const BUCKET = 'photos'
+const UPLOAD_TIMEOUT_MS = 30_000  // Storage PUT timeout (30s)
 
-// browser Supabase auth.getSession()ハングを回避するSigned URL方式でアップロードする。
+// Supabase Browser Clientを使わない直接PUTアップロード。
+// auth.getSession()ハングリスクを完全排除。
 // Before/Afterページはこちらを使用。
 export async function uploadPhotoViaSignedUrl(
   jobId: string,
@@ -36,26 +38,39 @@ export async function uploadPhotoViaSignedUrl(
       return null
     }
 
-    const { path, token } = await signedRes.json()
+    const { signedUrl, path } = await signedRes.json()
 
-    if (!token) {
-      console.error('[photos] signed-url response missing token')
+    if (!signedUrl || !path) {
+      console.error('[photos] signed-url response missing fields')
       return null
     }
 
-    // Step 2: Supabase SDK uploadToSignedUrl（必要なStorageヘッダーをSDKが処理）
-    // auth.getUser() / auth.getSession() は呼ばない
-    const supabase = createClient()
-    const { error: uploadError } = await supabase.storage
-      .from(BUCKET)
-      .uploadToSignedUrl(path, token, file)
+    // Step 2: 直接 PUT (Supabase SDK不使用 → authハングなし)
+    // AbortController で30秒timeout
+    const controller = new AbortController()
+    const timeoutId  = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS)
 
-    if (uploadError) {
-      console.error('[photos] storage upload error:', uploadError.message)
+    let uploadOk = false
+    try {
+      const uploadRes = await fetch(signedUrl, {
+        method:  'PUT',
+        body:    file,
+        headers: { 'Content-Type': file.type || 'image/jpeg' },
+        signal:  controller.signal,
+      })
+      uploadOk = uploadRes.ok
+      if (!uploadOk) console.error('[photos] storage PUT error:', uploadRes.status)
+    } catch (uploadErr) {
+      const isTimeout = (uploadErr as Error).name === 'AbortError'
+      console.error('[photos] storage upload', isTimeout ? 'timed out' : 'failed:', uploadErr)
       return null
+    } finally {
+      clearTimeout(timeoutId)
     }
 
-    // Step 3: サーバーへ写真レコード保存依頼
+    if (!uploadOk) return null
+
+    // Step 3: サーバーへ写真レコード保存依頼（Storage PUT成功後のみ）
     const recordRes = await fetch('/api/photos/record', {
       method:      'POST',
       headers:     { 'Content-Type': 'application/json' },
