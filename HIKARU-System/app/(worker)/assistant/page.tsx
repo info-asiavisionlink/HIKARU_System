@@ -201,7 +201,7 @@ function AssistantContent() {
   ]
 
   return (
-    <div style={{display:'flex',flexDirection:'column',height:'100%',background:BG,position:'relative',overflow:'hidden'}}>
+    <div style={{display:'flex',flexDirection:'column',height:'calc(100dvh - var(--header-height))',background:BG,position:'relative',overflow:'hidden'}}>
       <style>{`
         .jp-right{
           display:flex;flex-direction:column;
@@ -252,71 +252,48 @@ function AssistantContent() {
       <div style={{display:'flex',flex:1,overflow:'hidden'}}>
 
         {/* ── Center: JARVIS HUD ── */}
-        <main style={{display:'flex',flex:1,flexDirection:'column',overflow:'hidden',padding:'8px 0 10px'}}>
+        <main style={{display:'flex',flex:1,flexDirection:'column',overflow:'hidden',padding:'4px 0 4px'}}>
 
           {/* HUD — fills available space, click = toggle */}
           <JarvisHUD mode={mode} isConnecting={isConn} onClick={toggleSession} isSession={isSession}/>
 
-          {/* Tap label */}
-          <div style={{textAlign:'center',flexShrink:0,padding:'4px 0 2px'}}>
-            <div style={{
-              display:'inline-flex',alignItems:'center',gap:8,
-              padding:'5px 18px',borderRadius:20,
-              border:`1px solid ${GBdr}`,background:'rgba(0,0,0,.55)',
-            }}>
-              <span style={{color:isSession?GB:GDim,fontSize:10,fontFamily:'monospace',letterSpacing:'.14em'}}>
-                {isSession
-                  ?(isStandby?'スタンバイ中 — 話しかけてください':'JARVISをタップして起動 / 停止')
-                  :'JARVISをタップして起動 / 停止'}
-              </span>
-            </div>
-            {isErr && (
-              <div style={{color:'#FF5555',fontSize:9,fontFamily:'monospace',marginTop:3}}>{errorMessage||'接続エラー'}</div>
-            )}
-            {!isSpeechSupported && (
-              <div style={{color:'rgba(255,100,60,.7)',fontSize:8,marginTop:2}}>音声入力非対応ブラウザ</div>
-            )}
+          {/* Tap label — 1行 */}
+          <div style={{textAlign:'center',flexShrink:0,padding:'3px 0 2px'}}>
+            <span style={{color:isSession?GB:GDim,fontSize:10,fontFamily:'monospace',letterSpacing:'.12em'}}>
+              {isSession
+                ?(isStandby?'スタンバイ中 — 話しかけてください':'JARVISをタップして起動 / 停止')
+                :'JARVISをタップして起動 / 停止'}
+            </span>
+            {isErr && <span style={{color:'#FF5555',fontSize:9,fontFamily:'monospace',marginLeft:8}}>{errorMessage||'接続エラー'}</span>}
           </div>
 
-          {/* Bottom status bar */}
-          <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:22,
-            padding:'6px 16px 2px',flexShrink:0,flexWrap:'wrap'}}>
+          {/* Bottom status bar — 単一行 (PHASE 21) */}
+          <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:18,
+            padding:'4px 16px 3px',flexShrink:0}}>
             {/* 接続状態 */}
-            <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:3}}>
-              <Link2 style={{color:GDim,width:16,height:16}}/>
-              <span style={{color:GDim,fontSize:8,letterSpacing:'.16em',fontFamily:'monospace'}}>接続状態</span>
-              <div style={{display:'flex',alignItems:'center',gap:3}}>
-                <span style={{color:isReady?'#4ade80':isConn?'#FFB800':isErr?'#FF4444':GDim,
-                  fontSize:9,fontWeight:700,fontFamily:'monospace',letterSpacing:'.12em'}}>
-                  {isReady?'READY':isConn?'CONNECTING':isErr?'ERROR':'STANDBY'}
-                </span>
-                <div style={{width:5,height:5,borderRadius:'50%',
-                  background:isReady?'#4ade80':isConn?'#FFB800':isErr?'#FF4444':GDim,
-                  boxShadow:isReady?'0 0 5px #4ade80':isConn?'0 0 5px #FFB800':'none',
-                  animation:isConn?'jconn 1.2s ease-in-out infinite':undefined}}/>
-              </div>
+            <div style={{display:'flex',alignItems:'center',gap:4}}>
+              <div style={{width:5,height:5,borderRadius:'50%',
+                background:isReady?'#4ade80':isConn?'#FFB800':isErr?'#FF4444':GDim,
+                boxShadow:isReady?'0 0 5px #4ade80':isConn?'0 0 5px #FFB800':'none',
+                animation:isConn?'jconn 1.2s ease-in-out infinite':undefined}}/>
+              <span style={{color:GDim,fontSize:9,fontFamily:'monospace'}}>
+                {isReady?'READY':isConn?'CONNECTING':isErr?'ERROR':'STANDBY'}
+              </span>
             </div>
+            {/* sep */}
+            <span style={{color:GBdr,fontSize:9}}>|</span>
             {/* マイク */}
-            <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:3}}>
-              <Mic style={{color:GDim,width:16,height:16}}/>
-              <span style={{color:GDim,fontSize:8,letterSpacing:'.16em',fontFamily:'monospace'}}>マイク</span>
-              <div style={{display:'flex',alignItems:'center',gap:3}}>
-                <span style={{color:isSession?GD:GDim,fontSize:9,fontWeight:700,fontFamily:'monospace'}}>
-                  {isSession?'ON':'OFF'}
-                </span>
-                <div style={{width:5,height:5,borderRadius:'50%',
-                  background:isSession?GD:'#555',
-                  boxShadow:isSession?`0 0 5px ${GD}`:'none'}}/>
-              </div>
+            <div style={{display:'flex',alignItems:'center',gap:4}}>
+              <Mic style={{color:GDim,width:11,height:11}}/>
+              <span style={{color:isSession?GD:GDim,fontSize:9,fontWeight:isSession?700:400,fontFamily:'monospace'}}>
+                MIC {isSession?'ON':'OFF'}
+              </span>
+              <div style={{width:5,height:5,borderRadius:'50%',background:isSession?GD:'#555',boxShadow:isSession?`0 0 5px ${GD}`:'none'}}/>
             </div>
             {/* Wave */}
-            <Wave active={isActive||isSpeak} h={18}/>
+            <Wave active={isActive||isSpeak} h={14}/>
             {/* AIモデル */}
-            <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:3}}>
-              <Bot style={{color:GDim,width:16,height:16}}/>
-              <span style={{color:GDim,fontSize:8,letterSpacing:'.16em',fontFamily:'monospace'}}>AIモデル</span>
-              <span style={{color:GB,fontSize:9,fontWeight:700,fontFamily:'monospace'}}>HIKARU AI</span>
-            </div>
+            <span style={{color:GB,fontSize:9,fontWeight:700,fontFamily:'monospace',letterSpacing:'.08em'}}>HIKARU AI</span>
           </div>
         </main>
 

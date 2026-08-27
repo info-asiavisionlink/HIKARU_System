@@ -17,16 +17,17 @@ export interface HikaruCoreProps {
   isHovered?:    boolean
 }
 
-// ── State configs: 全てゴールド基調、intensity/speedで差別化 ─
-interface SC { i: number; spd: number; p: string; b: string }
+// ── State configs: intensity/speed/rippleで明確差別化 ────────
+interface SC { i: number; spd: number; p: string; b: string; rip: number; rpDur: number }
 const CFG: Record<string, SC> = {
-  idle:       { i:0.28, spd:0.32, p:'#B07A06', b:'#FFD700' },
-  connecting: { i:0.55, spd:0.65, p:'#CC9A0A', b:'#FFE020' },
-  listening:  { i:1.00, spd:1.30, p:'#FFD700', b:'#FFF8C0' },
-  processing: { i:0.90, spd:1.90, p:'#FFA800', b:'#FFD060' },
-  working:    { i:0.90, spd:2.10, p:'#FFA800', b:'#FFD060' },
-  speaking:   { i:1.00, spd:1.10, p:'#FFD700', b:'#FFFFFF' },
-  error:      { i:0.60, spd:0.50, p:'#996000', b:'#FFA020' },
+  //                              intensity speed    primary     bright      ripple  ripDur
+  idle:       { i:0.10, spd:0.10, p:'#6A4A02', b:'#B07800', rip:0.00, rpDur:2.4 },
+  connecting: { i:0.42, spd:0.48, p:'#BB8A08', b:'#FFD000', rip:0.18, rpDur:2.0 },
+  listening:  { i:1.00, spd:1.30, p:'#FFD700', b:'#FFF8C0', rip:0.82, rpDur:1.4 },
+  processing: { i:0.78, spd:1.80, p:'#FFA800', b:'#FFD060', rip:0.25, rpDur:1.8 },
+  working:    { i:0.82, spd:2.00, p:'#FFA800', b:'#FFD060', rip:0.32, rpDur:1.6 },
+  speaking:   { i:1.00, spd:1.05, p:'#FFD700', b:'#FFFFFF', rip:1.00, rpDur:0.95},
+  error:      { i:0.52, spd:0.22, p:'#7A4800', b:'#FF8C00', rip:0.22, rpDur:2.2 },
 }
 
 // ── Japanese subtext ──────────────────────────────────────────
@@ -50,7 +51,7 @@ const WAVE = [.22,.40,.62,.82,.98,1,.90,.75,.90,1,.80,.60,.38,.22]
 
 export function HikaruCore({ mode, size = 340, isConnecting = false, onClick, isHovered = false }: HikaruCoreProps) {
   const key = isConnecting ? 'connecting' : mode
-  const { i, spd, p, b } = CFG[key] ?? CFG.idle
+  const { i, spd, p, b, rip, rpDur } = CFG[key] ?? CFG.idle
   const sub  = SUBS[key] ?? '停止中'
   const isErr = key === 'error'
 
@@ -58,6 +59,10 @@ export function HikaruCore({ mode, size = 340, isConnecting = false, onClick, is
     typeof window !== 'undefined'
       ? window.matchMedia('(prefers-reduced-motion:reduce)').matches : false
   ).current
+
+  // Ripple: 4枚の同心円で声反応波動を表現 (pr確定後に定義)
+  const showRipple = rip > 0 && !pr
+  const rippleCount = rip > 0.8 ? 4 : rip > 0.3 ? 3 : rip > 0 ? 2 : 0
 
   // Geometry
   const W  = size * 1.04          // slight overflow for particles/glow
@@ -114,6 +119,7 @@ export function HikaruCore({ mode, size = 340, isConnecting = false, onClick, is
         @keyframes hk-sc  { to { transform:rotate(360deg); } }
         @keyframes hk-wv  { 0%{transform:scaleY(.08)} 100%{transform:scaleY(1)} }
         @keyframes hk-er  { 0%,100%{opacity:1} 50%{opacity:.15} }
+        @keyframes hk-rp  { 0%{transform:scale(1.00);opacity:.70} 100%{transform:scale(1.65);opacity:0} }
         @media(prefers-reduced-motion:reduce){[data-jring]{animation-duration:60s!important}}
       `}</style>
 
@@ -332,6 +338,20 @@ export function HikaruCore({ mode, size = 340, isConnecting = false, onClick, is
             fill={b} fontSize={R*.24} fontFamily="monospace" opacity=".9"
             style={{animation:`hk-er .9s ease-in-out infinite`,userSelect:'none'}}>⚠</text>
         )}
+
+        {/* ═══ VOICE REACTIVE RIPPLE ═══ */}
+        {showRipple && Array.from({length: rippleCount}, (_,ri) => (
+          <circle key={ri}
+            cx={cx} cy={cy} r={R * 0.60}
+            fill="none"
+            stroke={b}
+            strokeWidth={Math.max(0.8, 1.8 * rip)}
+            style={{
+              transformOrigin: `${cx}px ${cy}px`,
+              animation: `hk-rp ${rpDur}s ease-out ${(ri * rpDur / rippleCount).toFixed(2)}s infinite`,
+              filter: `drop-shadow(0 0 ${4 * rip}px ${b})`,
+            }}/>
+        ))}
 
         {/* ═══ Particles (36) ═══ */}
         {DOTS.map(([angle,rr],pi)=>{
