@@ -3,6 +3,59 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { evaluateBeforeAfter, checkPhotoQuality } from '@/modules/quality-ai'
 
 // ============================================================
+// Manual Context Builder（QUALITY-MG）
+// AI callなし。project + company manuals を直接取得。
+// company_id は job.project_id → projects.company_id で解決（tenant isolation）。
+// ============================================================
+
+interface QualityManualRow { type: string; title: string; content: string | null; source: 'project' | 'company' }
+
+const QUALITY_MANUAL_TYPES   = new Set(['note', 'faq', 'text'])
+const MANUAL_CONTEXT_MAX_CHARS  = 600   // 1 Manualあたり上限
+const TOTAL_MANUAL_CONTEXT_MAX  = 1500  // 全Manual合計上限
+
+function getManualRelevance(manual: QualityManualRow, spotName: string, spotDesc: string): number {
+  if (manual.source === 'project') return 100
+  const target = `${spotName} ${spotDesc}`.toLowerCase()
+  const source = (manual.title ?? '').toLowerCase()
+  if (spotName.length > 0 && source.includes(spotName.toLowerCase())) return 3
+  const words = target.split(/[\s・、。]+/).filter((w) => w.length >= 2)
+  return words.filter((w) => source.includes(w)).length > 0 ? 1 : 0
+}
+
+function buildQualityManualContext(manuals: QualityManualRow[], spotName = '', spotDesc = ''): string {
+  const filtered = manuals.filter((m) => QUALITY_MANUAL_TYPES.has(m.type) && m.content && m.content.trim().length > 0)
+  if (filtered.length === 0) return ''
+  const scored = filtered.map((m) => ({ m, score: getManualRelevance(m, spotName, spotDesc) }))
+  scored.sort((a, b) => b.score - a.score)
+  const parts = scored.map(({ m }) => {
+    const prefix = m.source === 'project' ? '【案件指示】' : '【会社基準】'
+    const body   = (m.content ?? '').trim().slice(0, MANUAL_CONTEXT_MAX_CHARS)
+    return `${prefix}「${m.title}」\n${body}`
+  })
+  return parts.join('\n\n').slice(0, TOTAL_MANUAL_CONTEXT_MAX)
+}
+
+async function fetchQualityManuals(admin: any, projectId: string, companyId: string): Promise<QualityManualRow[]> {
+  const [{ data: pManuals }, { data: cManuals }] = await Promise.all([
+    admin.from('manuals').select('type, title, content')
+      .eq('project_id', projectId).order('order_num', { ascending: true }),
+    admin.from('manuals').select('type, title, content')
+      .eq('company_id', companyId).eq('is_template', true).is('project_id', null)
+      .order('order_num', { ascending: true }),
+  ])
+  return [
+    ...((pManuals ?? []) as any[]).map((m: any) => ({ ...m, source: 'project' as const })),
+    ...((cManuals ?? []) as any[]).map((m: any) => ({ ...m, source: 'company' as const })),
+  ]
+}
+
+async function getProjectCompanyId(admin: any, projectId: string): Promise<string | null> {
+  const { data } = await admin.from('projects').select('company_id').eq('id', projectId).single()
+  return (data as any)?.company_id ?? null
+}
+
+// ============================================================
 // Evaluation Freshness（QUALITY-FRESH）
 // URL完全一致のみFRESH。NULL = STALE（撮影URL不明な旧評価）。
 // ============================================================
@@ -68,8 +121,8 @@ async function handleEvaluate(body: any, uid: string, admin: any) {
     return Response.json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'パラメータ不足' } }, { status: 400 })
   }
 
-  // Job ownership確認（adminクライアントはRLSをバイパスするため明示確認）
-  const { data: job } = await admin.from('jobs').select('id, status').eq('id', jobId).eq('worker_id', uid).maybeSingle()
+  // Job ownership確認（project_idも同時取得）
+  const { data: job } = await admin.from('jobs').select('id, status, project_id').eq('id', jobId).eq('worker_id', uid).maybeSingle()
   if (!job) {
     return Response.json({ success: false, error: { code: 'FORBIDDEN', message: 'このジョブへのアクセス権がありません' } }, { status: 403 })
   }
@@ -93,12 +146,29 @@ async function handleEvaluate(body: any, uid: string, admin: any) {
     return Response.json({ success: true, data: cachedEval, fromCache: true })
   }
 
-  // 撮影箇所名を取得
-  const { data: spot } = await admin.from('photo_spots').select('name').eq('id', spotId).single()
-  const locationName = spot?.name ?? '撮影箇所'
+  // 撮影箇所名・descriptionを取得
+  const { data: spot } = await admin.from('photo_spots').select('name, description').eq('id', spotId).single()
+  const locationName = (spot as any)?.name        ?? '撮影箇所'
+  const spotDesc     = (spot as any)?.description ?? ''
+
+  // QUALITY-MG: Manual Context構築（AI callなし・失敗時はGeneric評価にfallback）
+  let manualContext = ''
+  try {
+    if (job.project_id) {
+      const companyId = await getProjectCompanyId(admin, job.project_id)
+      if (companyId) {
+        const manuals = await fetchQualityManuals(admin, job.project_id, companyId)
+        manualContext = buildQualityManualContext(manuals, locationName, spotDesc)
+      }
+    }
+  } catch { /* silent fallback to generic evaluation */ }
 
   try {
-    const result = await evaluateBeforeAfter(beforeUrl, afterUrl, locationName)
+    const result = await evaluateBeforeAfter(
+      beforeUrl, afterUrl, locationName,
+      spotDesc || undefined,
+      manualContext || undefined,
+    )
 
     // PHOTO-VALID: 写真検証NGならDB保存しない（スコア0をDBに残さない）
     if (!result.evaluationPossible) {
@@ -169,10 +239,21 @@ async function handleEvaluateAll(body: any, uid: string, admin: any) {
     )
   }
 
-  // 撮影箇所一覧取得（project_id ベース）
+  // QUALITY-MG: Manual一覧をspot loop前に1回だけ取得（N+1なし・AI callなし）
+  let allManuals: QualityManualRow[] = []
+  try {
+    if (job.project_id) {
+      const companyId = await getProjectCompanyId(admin, job.project_id)
+      if (companyId) {
+        allManuals = await fetchQualityManuals(admin, job.project_id, companyId)
+      }
+    }
+  } catch { /* silent fallback */ }
+
+  // 撮影箇所一覧取得（description含む）
   const { data: spots } = await admin
     .from('photo_spots')
-    .select('id, name, is_required')
+    .select('id, name, description, is_required')
     .eq('project_id', job.project_id)
     .order('order_num', { ascending: true })
 
@@ -226,7 +307,14 @@ async function handleEvaluateAll(body: any, uid: string, admin: any) {
     }
 
     try {
-      const result = await evaluateBeforeAfter(pair.before.url, pair.after.url, spot.name)
+      const spotDesc      = (spot as any).description ?? ''
+      // spot ごとに pure function で soft-sort + Total Cap 適用（DB re-query なし）
+      const manualContext = buildQualityManualContext(allManuals, spot.name, spotDesc)
+      const result = await evaluateBeforeAfter(
+        pair.before.url, pair.after.url, spot.name,
+        spotDesc || undefined,
+        manualContext || undefined,
+      )
 
       // PHOTO-VALID: 写真検証NGならDB保存スキップ（スコア0を誤保存しない）
       if (!result.evaluationPossible) {

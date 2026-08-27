@@ -101,7 +101,9 @@ export async function checkPhotoQuality(
 export async function evaluateBeforeAfter(
   beforeUrl: string,
   afterUrl: string,
-  locationName: string
+  locationName: string,
+  spotDescription?: string,
+  manualContext?: string,
 ): Promise<SpotEvaluationResult> {
   const openai = createOpenAIClient()
 
@@ -115,7 +117,7 @@ export async function evaluateBeforeAfter(
           { type: 'image_url', image_url: { url: beforeUrl, detail: 'high' } },
           { type: 'text', text: '【After（清掃後）】' },
           { type: 'image_url', image_url: { url: afterUrl, detail: 'high' } },
-          { type: 'text', text: BEFORE_AFTER_EVALUATION_PROMPT(locationName) },
+          { type: 'text', text: BEFORE_AFTER_EVALUATION_PROMPT(locationName, spotDescription, manualContext) },
         ],
       },
     ],
