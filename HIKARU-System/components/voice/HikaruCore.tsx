@@ -28,15 +28,15 @@ const COLORS: Record<string, C> = {
   error:      { p:'#FF3030', b:'#FF8888', g:'rgba(255,48,48,',   i:0.80 },
 }
 
-// ── Labels ───────────────────────────────────────────────────
+// ── Labels: [English state, Japanese sub] ────────────────────
 const LABELS: Record<string, [string, string]> = {
-  idle:       ['JARVIS', 'STANDBY'],
-  connecting: ['JARVIS', 'CONNECTING'],
-  listening:  ['JARVIS', 'LISTENING'],
-  processing: ['JARVIS', 'THINKING'],
-  working:    ['JARVIS', 'PROCESSING'],
-  speaking:   ['JARVIS', 'SPEAKING'],
-  error:      ['JARVIS', 'ERROR'],
+  idle:       ['STANDBY',       '停止中'],
+  connecting: ['CONNECTING...', '接続中'],
+  listening:  ['LISTENING',     '聞いています'],
+  processing: ['THINKING',      '考えています'],
+  working:    ['PROCESSING',    '処理中'],
+  speaking:   ['SPEAKING',      '応答しています'],
+  error:      ['ERROR',         '接続エラー'],
 }
 
 // ── Speed multiplier ─────────────────────────────────────────
@@ -71,30 +71,30 @@ export function HikaruCore({ mode, size = 300, isConnecting = false }: HikaruCor
       ? window.matchMedia('(prefers-reduced-motion:reduce)').matches : false
   ).current
 
-  // SVG layout (normalized)
+  // SVG layout — 縦比率を圧縮してHUDをより大きく見せる
   const W    = size * 1.05
-  const H    = size * 1.82
+  const H    = size * 1.42   // 1.82→1.42: 短縮して中央HUDを大きく
   const cx   = W / 2
 
   // Central HUD
-  const hudY = H * 0.455
+  const hudY = H * 0.472
   const R    = size * 0.404   // outer radius
 
-  // Top emitter
-  const tY   = H * 0.082
-  const tRx  = size * 0.232
-  const tRy  = size * 0.038
+  // Top emitter (より小さく・近く)
+  const tY   = H * 0.058
+  const tRx  = size * 0.192
+  const tRy  = size * 0.032
 
-  // Bottom projector
-  const bY   = H * 0.900
-  const bRx  = size * 0.346
-  const bRy  = size * 0.058
+  // Bottom projector (より小さく・近く)
+  const bY   = H * 0.940
+  const bRx  = size * 0.290
+  const bRy  = size * 0.048
 
-  // Beam
-  const bT1  = tY + tRy * 2.2
-  const bT2  = hudY - R * 1.05
-  const bB1  = hudY + R * 1.05
-  const bB2  = bY - bRy * 2.2
+  // Beam (短縮)
+  const bT1  = tY + tRy * 2.0
+  const bT2  = hudY - R * 1.04
+  const bB1  = hudY + R * 1.04
+  const bB2  = bY - bRy * 2.0
 
   // Speed helper
   const d = (s: number) => `${pr ? s * 5 : s / spd}s`
@@ -104,8 +104,9 @@ export function HikaruCore({ mode, size = 300, isConnecting = false }: HikaruCor
   const o = (base: number) => Math.min(1, base * (0.45 + i * 0.65))
 
   // Font sizes
-  const fM = Math.max(11, size * 0.086)
-  const fS = Math.max(7,  size * 0.044)
+  const fM  = Math.max(12, size * 0.088)   // "JARVIS"
+  const fEn = Math.max(8,  size * 0.046)   // English state
+  const fS  = Math.max(6,  size * 0.034)   // Japanese sub
 
   const showWave    = (key === 'listening' || key === 'speaking') && !pr
   const showScan    = (key === 'processing' || key === 'working') && !pr
@@ -321,32 +322,42 @@ export function HikaruCore({ mode, size = 300, isConnecting = false }: HikaruCor
             style={{animation:`j-er .9s ease-in-out infinite`,userSelect:'none'}}>⚠</text>
         )}
 
-        {/* Center text: JARVIS */}
-        <text x={cx} y={hudY-(showWave?R*.24:isErr?R*.24:R*.08)}
+        {/* Center text: "JARVIS" (always, large) */}
+        <text x={cx} y={hudY - (showWave ? R*.26 : isErr ? R*.26 : R*.14)}
           textAnchor="middle" dominantBaseline="middle"
           fill={b} fontSize={fM} fontWeight="900"
-          letterSpacing=".16em" fontFamily="'Courier New',Courier,monospace"
-          opacity=".96"
-          style={{filter:i>.48?`drop-shadow(0 0 ${fM*.32}px ${b})`:'none',
+          letterSpacing=".18em" fontFamily="'Courier New',Courier,monospace"
+          opacity=".97"
+          style={{filter:i>.45?`drop-shadow(0 0 ${fM*.28}px ${b}) drop-shadow(0 0 ${fM*.12}px ${b})`:'none',
             animation:isErr?`j-er .9s ease-in-out infinite`:undefined,
-            userSelect:'none'}}>
+            userSelect:'none',cursor:'pointer'}}>
+          JARVIS
+        </text>
+
+        {/* Center text: English state */}
+        <text x={cx} y={hudY + (showWave ? R*.0 : isErr ? R*.0 : R*.10)}
+          textAnchor="middle" dominantBaseline="middle"
+          fill={i>.6?b:p} fontSize={fEn} fontWeight="600"
+          letterSpacing=".14em" fontFamily="'Courier New',Courier,monospace"
+          opacity=".82"
+          style={{userSelect:'none',cursor:'pointer'}}>
           {lM}
         </text>
 
-        {/* Center text: state */}
-        <text x={cx} y={hudY+(showWave?R*.04:R*.18)}
+        {/* Center text: Japanese sub */}
+        <text x={cx} y={hudY + (showWave ? R*.13 : isErr ? R*.14 : R*.22)}
           textAnchor="middle" dominantBaseline="middle"
-          fill={p} fontSize={fS} letterSpacing=".13em"
-          fontFamily="'Courier New',Courier,monospace" opacity=".78"
-          style={{userSelect:'none'}}>
+          fill={p} fontSize={fS} letterSpacing=".08em"
+          fontFamily="'Hiragino Sans','Yu Gothic',sans-serif" opacity=".68"
+          style={{userSelect:'none',cursor:'pointer'}}>
           {lS}
         </text>
 
         {/* Idle dots */}
         {key==='idle' && (
-          <text x={cx} y={hudY+R*.30} textAnchor="middle"
-            fill={p} fontSize={fS*.68} letterSpacing=".24em"
-            fontFamily="monospace" opacity=".32" style={{userSelect:'none'}}>
+          <text x={cx} y={hudY+R*.32} textAnchor="middle"
+            fill={p} fontSize={fS*.65} letterSpacing=".26em"
+            fontFamily="monospace" opacity=".28" style={{userSelect:'none'}}>
             · · · · ·
           </text>
         )}
