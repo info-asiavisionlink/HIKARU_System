@@ -48,35 +48,45 @@ export default function AttendancePage() {
 
   async function fetchToday() {
     setLoading(true)
-    const res  = await fetch('/api/attendance?mode=today', { credentials: 'include' })
-    const json = await res.json()
-    setRecord(json.data)
-    setLoading(false)
+    try {
+      const res  = await fetch('/api/attendance?mode=today', { credentials: 'include' })
+      const json = await res.json()
+      setRecord(json.data)
+    } catch {
+      // ネットワークエラー時もUIを継続表示
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function punch(type: PunchType) {
     setPunching(type)
     setMessage(null)
-    const res  = await fetch('/api/attendance/punch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type }),
-      credentials: 'include',
-    })
-    const json = await res.json()
-    if (res.ok) {
-      setRecord(json.data)
-      const labels: Record<PunchType, string> = {
-        clock_in:    '出勤しました',
-        break_start: '休憩を開始しました',
-        break_end:   '休憩を終了しました',
-        clock_out:   '退勤しました',
+    try {
+      const res  = await fetch('/api/attendance/punch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type }),
+        credentials: 'include',
+      })
+      const json = await res.json()
+      if (res.ok) {
+        setRecord(json.data)
+        const labels: Record<PunchType, string> = {
+          clock_in:    '出勤しました',
+          break_start: '休憩を開始しました',
+          break_end:   '休憩を終了しました',
+          clock_out:   '退勤しました',
+        }
+        setMessage(labels[type])
+      } else {
+        setMessage('エラーが発生しました')
       }
-      setMessage(labels[type])
-    } else {
+    } catch {
       setMessage('エラーが発生しました')
+    } finally {
+      setPunching(null)
     }
-    setPunching(null)
   }
 
   const dateStr = now.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })
