@@ -126,19 +126,26 @@ function BreakdownBar({ label, value }: { label: string; value: number | null })
 function SpotEvaluationCard({
   evaluation,
   photos,
+  projectId,
+  isStale,
 }: {
   evaluation: EvaluationRow
   photos: { beforeUrl?: string; afterUrl?: string }
+  projectId: string
+  isStale: boolean
 }) {
   const [expanded, setExpanded] = React.useState(false)
   const info   = getScoreInfo(evaluation.score)
   const recCfg = RECOMMENDATION_CONFIG[evaluation.recommendation]
   const spotName = evaluation.photo_spots?.name ?? '撮影箇所'
+  const afterHref = `/jobs/${projectId}/after?spotId=${evaluation.spot_id}`
 
   return (
     <div className={cn(
       'rounded-[var(--radius-xl)] border overflow-hidden',
-      evaluation.passed ? 'border-[var(--color-success)]/30' : 'border-[var(--color-error)]/30'
+      isStale
+        ? 'border-[var(--color-warning)]/50'
+        : evaluation.passed ? 'border-[var(--color-success)]/30' : 'border-[var(--color-error)]/30'
     )}>
       {/* ヘッダー */}
       <button
@@ -149,6 +156,11 @@ function SpotEvaluationCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <p className="font-semibold text-sm text-[var(--color-foreground)]">{spotName}</p>
+            {isStale && (
+              <span className="rounded-[var(--radius-full)] px-2 py-0.5 text-[10px] font-semibold bg-[var(--color-warning-muted)] text-[var(--color-warning-foreground)] border border-[var(--color-warning)]/30">
+                ⚠ 旧評価
+              </span>
+            )}
             <span className={cn(
               'rounded-[var(--radius-full)] px-2 py-0.5 text-[10px] font-semibold',
               evaluation.recommendation === 'pass'  ? 'bg-[var(--color-success-muted)] text-[var(--color-success-foreground)]' :
@@ -163,6 +175,24 @@ function SpotEvaluationCard({
         </div>
         {expanded ? <ChevronUp className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
       </button>
+
+      {/* STALE警告バナー（写真更新後・再評価前） */}
+      {isStale && (
+        <div className="px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap bg-[var(--color-warning-muted)]/60 border-t border-[var(--color-warning)]/20">
+          <p className="text-xs font-medium flex items-center gap-1 text-[var(--color-warning-foreground)]">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            この評価は更新前の写真に基づいています。AI品質評価を再実行してください。
+          </p>
+          {evaluation.recommendation === 'redo' && (
+            <Link
+              href={afterHref}
+              className="shrink-0 flex items-center gap-1 text-xs font-semibold rounded-[var(--radius-lg)] px-2.5 py-1 bg-[var(--color-warning-muted)] text-[var(--color-warning-foreground)] border border-[var(--color-warning)]/40"
+            >
+              <RefreshCw className="h-3 w-3" /> 再撮影
+            </Link>
+          )}
+        </div>
+      )}
 
       {/* 詳細展開 */}
       {expanded && (
@@ -229,6 +259,16 @@ function SpotEvaluationCard({
                 ))}
               </ul>
             </div>
+          )}
+
+          {/* REDO: Fresh評価時の再清掃ナビゲーション（spot指定） */}
+          {evaluation.recommendation === 'redo' && !isStale && (
+            <Link
+              href={afterHref}
+              className="flex items-center justify-center gap-1.5 rounded-[var(--radius-lg)] py-2.5 text-sm font-semibold bg-[var(--color-error-muted)] text-[var(--color-error-foreground)] border border-[var(--color-error)]/30 active:opacity-80 transition-opacity"
+            >
+              <RefreshCw className="h-4 w-4" /> この箇所を再清掃する
+            </Link>
           )}
         </div>
       )}
@@ -457,6 +497,8 @@ export default function EvaluationPage() {
                 key={ev.id}
                 evaluation={ev}
                 photos={getSpotPhotos(ev.spot_id)}
+                projectId={projectId}
+                isStale={ev.fresh === false}
               />
             ))}
           </div>
@@ -522,7 +564,7 @@ export default function EvaluationPage() {
             ) : (
               <div className="flex gap-2">
                 <Link
-                  href={`/jobs/${projectId}/after`}
+                  href={`/jobs/${projectId}/after${evaluations.find((e) => e.recommendation === 'redo' && e.fresh !== false)?.spot_id ? `?spotId=${evaluations.find((e) => e.recommendation === 'redo' && e.fresh !== false)!.spot_id}` : ''}`}
                   className="flex-1 flex items-center justify-center gap-1.5 rounded-[var(--radius-xl)] py-3 bg-[var(--color-warning-muted)] text-[var(--color-warning-foreground)] text-sm font-semibold active:bg-[var(--color-warning)]/20 transition-colors"
                 >
                   <RefreshCw className="h-4 w-4" /> 再清掃する

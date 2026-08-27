@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
     // QUALITY-FRESH: 写真撮り直し後に古いEvaluationでcompleteできないようにする
     const [photosRes, evalsRes] = await Promise.all([
       supabase.from('photos').select('spot_id, photo_type, url').eq('job_id', jobId),
-      supabase.from('ai_evaluations').select('spot_id, evaluated_before_url, evaluated_after_url').eq('job_id', jobId),
+      supabase.from('ai_evaluations').select('spot_id, evaluated_before_url, evaluated_after_url, recommendation').eq('job_id', jobId),
     ])
 
     const beforeUrlBySpot: Record<string, string> = {}
@@ -91,6 +91,24 @@ export async function POST(req: NextRequest) {
           code:    'EVALUATION_STALE',
           message: '写真が更新されているためAI品質評価を再実行してください。',
           spotIds: (staleEvals as any[]).map((e: any) => e.spot_id),
+        },
+        { status: 409 },
+      )
+    }
+
+    // REDO guard: Fresh評価でREDOが残っている場合はComplete不可
+    const redoFreshEvals = ((evalsRes.data ?? []) as any[]).filter((ev: any) =>
+      isEvaluationFresh(ev, beforeUrlBySpot[ev.spot_id] ?? '', afterUrlBySpot[ev.spot_id] ?? '') &&
+      ev.recommendation === 'redo'
+    )
+
+    if (redoFreshEvals.length > 0) {
+      return Response.json(
+        {
+          error:   'redo evaluation not resolved',
+          code:    'REDO_NOT_RESOLVED',
+          message: '再清掃が必要な箇所があります。写真を撮り直して再評価してください。',
+          spotIds: (redoFreshEvals as any[]).map((e: any) => e.spot_id),
         },
         { status: 409 },
       )
