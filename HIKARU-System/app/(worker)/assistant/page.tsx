@@ -511,7 +511,7 @@ function AssistantPageContent() {
             className="relative flex items-center justify-center shrink-0"
             style={{ width: 'min(380px, calc(100vw - 2rem))', height: 'min(380px, calc(100vw - 2rem))' }}
           >
-            <HikaruCoreSized mode={mode} />
+            <HikaruCoreSized mode={mode} isConnecting={voiceEngineMode === 'realtime-connecting'} />
           </div>
 
           {/* Voice response panel */}
@@ -623,7 +623,7 @@ function AssistantPageContent() {
 // ─── Responsive HikaruCore wrapper ───────────────────────────
 import type { VoiceMode } from '@/lib/voice/state/types'
 
-function HikaruCoreSized({ mode }: { mode: VoiceMode }) {
+function HikaruCoreSized({ mode, isConnecting }: { mode: VoiceMode; isConnecting?: boolean }) {
   const ref  = React.useRef<HTMLDivElement>(null)
   const [sz, setSz] = React.useState(300)
 
@@ -639,7 +639,7 @@ function HikaruCoreSized({ mode }: { mode: VoiceMode }) {
 
   return (
     <div ref={ref} style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <HikaruCore mode={mode} size={sz} />
+      <HikaruCore mode={mode} size={sz} isConnecting={isConnecting} />
     </div>
   )
 }

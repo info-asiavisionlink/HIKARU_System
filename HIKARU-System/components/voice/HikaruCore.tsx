@@ -7,11 +7,13 @@ import type { VoiceMode } from '@/lib/voice/state/types'
 // HikaruCore — JARVIS型AIコアアニメーション
 // CSS/SVGのみ使用。Three.js/Canvas不使用。
 // VoiceModeに応じてアニメーション速度・輝度を変化。
+// isConnecting: voiceEngineMode === 'realtime-connecting' 時に渡す。
 // ============================================================
 
 interface HikaruCoreProps {
-  mode:  VoiceMode
-  size?: number  // px (default: 240)
+  mode:          VoiceMode
+  size?:         number   // px (default: 240)
+  isConnecting?: boolean  // connecting state overlay
 }
 
 const COLORS = {
@@ -26,12 +28,12 @@ const COLORS = {
 } as const
 
 interface ModeConfig {
-  coreGlow:       string
-  ringADuration:  string
-  ringBDuration:  string
-  ringCDuration:  string
-  pulseDuration:  string
-  coreBrightness: string
+  coreGlow:        string
+  ringADuration:   string
+  ringBDuration:   string
+  ringCDuration:   string
+  pulseDuration:   string
+  coreBrightness:  string
   particleOpacity: string
 }
 
@@ -92,6 +94,16 @@ const MODE_CONFIG: Record<VoiceMode, ModeConfig> = {
   },
 }
 
+// センターテキスト（HUD内に表示）
+const MODE_LABELS: Record<VoiceMode, { main: string; sub: string }> = {
+  idle:       { main: 'JARVIS', sub: 'STANDBY' },
+  listening:  { main: 'LISTEN', sub: '聞いています' },
+  processing: { main: 'THINK',  sub: '考えています' },
+  working:    { main: 'WORK',   sub: '処理中' },
+  speaking:   { main: 'SPEAK',  sub: '応答中' },
+  error:      { main: 'ERROR',  sub: 'エラー' },
+}
+
 // 小粒子の位置（固定 seed）
 const PARTICLES = [
   { angle: 15,  r: 0.88, delay: '0s'    },
@@ -106,12 +118,20 @@ const PARTICLES = [
   { angle: 340, r: 0.88, delay: '0.3s'  },
 ]
 
-export function HikaruCore({ mode, size = 240 }: HikaruCoreProps) {
-  const cfg         = MODE_CONFIG[mode]
-  const isError     = mode === 'error'
-  const coreColor   = isError ? COLORS.error  : COLORS.goldDark
-  const ringColor   = isError ? COLORS.error  : COLORS.gold
-  const r           = size / 2
+// tick mark 角度（24分割）
+const TICKS = Array.from({ length: 24 }, (_, i) => ({
+  angle:   (i * 15 * Math.PI) / 180,
+  isMajor: i % 6 === 0,
+}))
+
+export function HikaruCore({ mode, size = 240, isConnecting = false }: HikaruCoreProps) {
+  const cfg       = MODE_CONFIG[mode]
+  const isError   = mode === 'error'
+  const coreColor = isError ? COLORS.error  : COLORS.goldDark
+  const ringColor = isError ? COLORS.error  : isConnecting ? COLORS.amber : COLORS.gold
+
+  const r = size / 2
+
   const prefersReduced = React.useRef(
     typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
   )
@@ -121,19 +141,36 @@ export function HikaruCore({ mode, size = 240 }: HikaruCoreProps) {
   const effectiveRingB = prefersReduced.current ? '30s' : cfg.ringBDuration
   const effectiveRingC = prefersReduced.current ? '50s' : cfg.ringCDuration
 
+  const centerLabel = isConnecting
+    ? { main: 'LINK', sub: '接続中...' }
+    : MODE_LABELS[mode]
+
+  const textColor    = isConnecting ? COLORS.amber : isError ? COLORS.error : COLORS.goldBright
+  const textColorSub = isConnecting ? COLORS.amber : isError ? COLORS.error : COLORS.gold
+
+  const mainFontSize = Math.max(9,  size * 0.048)
+  const subFontSize  = Math.max(6,  size * 0.030)
+
+  const showScanner = !prefersReduced.current && (mode === 'processing' || mode === 'working')
+
   return (
     <div
       style={{ width: size, height: size, position: 'relative', flexShrink: 0 }}
       role="img"
-      aria-label={`HIKARU AI Core - ${mode}`}
+      aria-label={`HIKARU AI Core - ${isConnecting ? 'connecting' : mode}`}
     >
       <style>{`
-        @keyframes hk-ring-cw  { from { transform: rotate(0deg);   } to { transform: rotate(360deg);  } }
-        @keyframes hk-ring-ccw { from { transform: rotate(0deg);   } to { transform: rotate(-360deg); } }
-        @keyframes hk-pulse    { 0%,100% { opacity: 0.6; transform: scale(0.96); } 50% { opacity: 1; transform: scale(1.04); } }
-        @keyframes hk-glow     { 0%,100% { opacity: 0.7; } 50% { opacity: 1; } }
-        @keyframes hk-particle { 0%,100% { opacity: 0; transform: scale(0.5); } 50% { opacity: 1; transform: scale(1); } }
-        @keyframes hk-error    { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+        @keyframes hk-ring-cw   { from { transform: rotate(0deg);    } to { transform: rotate(360deg);   } }
+        @keyframes hk-ring-ccw  { from { transform: rotate(0deg);    } to { transform: rotate(-360deg);  } }
+        @keyframes hk-pulse     { 0%,100% { opacity: 0.6; transform: scale(0.96); } 50% { opacity: 1; transform: scale(1.04); } }
+        @keyframes hk-glow      { 0%,100% { opacity: 0.7; } 50% { opacity: 1; } }
+        @keyframes hk-particle  { 0%,100% { opacity: 0; transform: scale(0.5); } 50% { opacity: 1; transform: scale(1); } }
+        @keyframes hk-error     { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+        @keyframes hk-scanner   { from { transform: rotate(0deg); }  to { transform: rotate(360deg); } }
+        @keyframes hk-connecting-arc { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
+        @media (prefers-reduced-motion: reduce) {
+          .hk-wave-bar { animation: none !important; transform: scaleY(0.5) !important; }
+        }
       `}</style>
 
       <svg
@@ -142,6 +179,37 @@ export function HikaruCore({ mode, size = 240 }: HikaruCoreProps) {
         viewBox={`0 0 ${size} ${size}`}
         style={{ overflow: 'visible' }}
       >
+        {/* ── SVG radial gradient for core ── */}
+        <defs>
+          <radialGradient id={`hkCoreGrad-${size}`} cx="40%" cy="35%" r="60%">
+            <stop offset="0%"   stopColor={COLORS.goldBright} />
+            <stop offset="60%"  stopColor={coreColor}          />
+            <stop offset="100%" stopColor="oklch(0.08 0.005 260)" />
+          </radialGradient>
+          <radialGradient id={`hkGlowGrad-${size}`} cx="50%" cy="50%" r="50%">
+            <stop offset="0%"   stopColor={ringColor} stopOpacity="0.3" />
+            <stop offset="100%" stopColor={ringColor} stopOpacity="0" />
+          </radialGradient>
+        </defs>
+
+        {/* ── Tick marks（外周 HUD メモリ）── */}
+        {TICKS.map(({ angle, isMajor }, i) => {
+          const r1 = r * (isMajor ? 0.875 : 0.912)
+          const r2 = r * 0.952
+          return (
+            <line
+              key={i}
+              x1={r + Math.cos(angle) * r1}
+              y1={r + Math.sin(angle) * r1}
+              x2={r + Math.cos(angle) * r2}
+              y2={r + Math.sin(angle) * r2}
+              stroke={ringColor}
+              strokeWidth={isMajor ? 1.2 : 0.5}
+              opacity={isMajor ? 0.45 : 0.20}
+            />
+          )
+        })}
+
         {/* ── Outer HUD ring（ゆっくり時計回り・ダッシュ）── */}
         <g style={{
           transformOrigin: `${r}px ${r}px`,
@@ -202,6 +270,38 @@ export function HikaruCore({ mode, size = 240 }: HikaruCoreProps) {
           opacity="0.40"
         />
 
+        {/* ── CONNECTING: 点滅するARC ── */}
+        {isConnecting && (
+          <circle
+            cx={r} cy={r} r={r * 0.55}
+            fill="none"
+            stroke={COLORS.amber}
+            strokeWidth="1"
+            strokeDasharray="40 20"
+            opacity="0.6"
+            style={{ animation: `hk-connecting-arc 1.2s ease-in-out infinite` }}
+          />
+        )}
+
+        {/* ── THINKING / WORKING: Scanner line ── */}
+        {showScanner && (
+          <g style={{
+            transformOrigin: `${r}px ${r}px`,
+            animation: `hk-scanner 1.8s linear infinite`,
+          }}>
+            <line
+              x1={r}
+              y1={r}
+              x2={r}
+              y2={r * 0.38}
+              stroke={ringColor}
+              strokeWidth="0.8"
+              opacity="0.55"
+            />
+            <circle cx={r} cy={r * 0.42} r="2.5" fill={ringColor} opacity="0.85" />
+          </g>
+        )}
+
         {/* ── 粒子 ── */}
         {PARTICLES.map((p, i) => {
           const rad = (p.angle * Math.PI) / 180
@@ -234,25 +334,7 @@ export function HikaruCore({ mode, size = 240 }: HikaruCoreProps) {
         {/* ── Core 本体 ── */}
         <circle
           cx={r} cy={r} r={r * 0.28}
-          style={{
-            fill: `radial-gradient(circle at 40% 35%, ${COLORS.goldBright}, ${coreColor} 60%, oklch(0.08 0.005 260))`,
-            animation: isError
-              ? `hk-error ${cfg.pulseDuration} ease-in-out infinite`
-              : `hk-pulse ${cfg.pulseDuration} ease-in-out infinite`,
-            filter: `brightness(${cfg.coreBrightness})`,
-          }}
-        />
-        {/* SVG radial gradient for core */}
-        <defs>
-          <radialGradient id="hkCoreGrad" cx="40%" cy="35%" r="60%">
-            <stop offset="0%"   stopColor={COLORS.goldBright} />
-            <stop offset="60%"  stopColor={coreColor}          />
-            <stop offset="100%" stopColor="oklch(0.08 0.005 260)" />
-          </radialGradient>
-        </defs>
-        <circle
-          cx={r} cy={r} r={r * 0.28}
-          fill="url(#hkCoreGrad)"
+          fill={`url(#hkCoreGrad-${size})`}
           style={{
             animation: isError
               ? `hk-error ${cfg.pulseDuration} ease-in-out infinite`
@@ -280,6 +362,37 @@ export function HikaruCore({ mode, size = 240 }: HikaruCoreProps) {
               stroke={ringColor} strokeWidth="0.5" opacity="0.30" />
           )
         })}
+
+        {/* ── Center Status Text ── */}
+        <text
+          x={r}
+          y={r - mainFontSize * 0.4}
+          textAnchor="middle"
+          dominantBaseline="middle"
+          fill={textColor}
+          fontSize={mainFontSize}
+          fontWeight="bold"
+          letterSpacing="0.10em"
+          fontFamily="'Courier New', Courier, monospace"
+          opacity="0.95"
+          style={{ userSelect: 'none', pointerEvents: 'none' }}
+        >
+          {centerLabel.main}
+        </text>
+        <text
+          x={r}
+          y={r + mainFontSize * 1.05}
+          textAnchor="middle"
+          dominantBaseline="middle"
+          fill={textColorSub}
+          fontSize={subFontSize}
+          letterSpacing="0.06em"
+          fontFamily="'Courier New', Courier, monospace"
+          opacity="0.60"
+          style={{ userSelect: 'none', pointerEvents: 'none' }}
+        >
+          {centerLabel.sub}
+        </text>
       </svg>
 
       {/* CSS glow overlay */}
