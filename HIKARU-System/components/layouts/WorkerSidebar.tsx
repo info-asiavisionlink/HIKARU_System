@@ -34,9 +34,10 @@ const navItems: NavItem[] = [
 interface WorkerSidebarProps {
   mobileOpen?: boolean
   onMobileClose?: () => void
+  unreadCount?: number
 }
 
-export function WorkerSidebar({ mobileOpen = false, onMobileClose }: WorkerSidebarProps) {
+export function WorkerSidebar({ mobileOpen = false, onMobileClose, unreadCount = 0 }: WorkerSidebarProps) {
   const pathname = usePathname()
 
   React.useEffect(() => {
@@ -176,12 +177,19 @@ export function WorkerSidebar({ mobileOpen = false, onMobileClose }: WorkerSideb
                     style={isActive ? { filter: `drop-shadow(0 0 4px ${GOLD}cc)` } : {}}
                   />
                   <span className="truncate">{item.label}</span>
-                  {isActive && (
+                  {item.href === '/notifications' && unreadCount > 0 ? (
+                    <span
+                      className="ml-auto flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1 text-[9px] font-bold leading-none"
+                      style={{ background: 'oklch(0.65 0.18 25)', color: 'white' }}
+                    >
+                      {unreadCount > 99 ? '99+' : unreadCount}
+                    </span>
+                  ) : isActive ? (
                     <span
                       className="absolute right-2.5 h-1.5 w-1.5 rounded-full"
                       style={{ background: GOLD, boxShadow: `0 0 6px ${GOLD}` }}
                     />
-                  )}
+                  ) : null}
                 </Link>
               </li>
             )

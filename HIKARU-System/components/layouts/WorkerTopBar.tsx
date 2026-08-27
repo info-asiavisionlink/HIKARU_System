@@ -9,9 +9,10 @@ const GOLD = 'oklch(0.73 0.12 78)'
 
 interface WorkerTopBarProps {
   onMobileMenuClick?: () => void
+  unreadCount?: number
 }
 
-export function WorkerTopBar({ onMobileMenuClick }: WorkerTopBarProps) {
+export function WorkerTopBar({ onMobileMenuClick, unreadCount = 0 }: WorkerTopBarProps) {
   const [time, setTime] = React.useState('')
 
   React.useEffect(() => {
@@ -73,6 +74,14 @@ export function WorkerTopBar({ onMobileMenuClick }: WorkerTopBarProps) {
           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = `${GOLD}80` }}
         >
           <Bell className="h-4 w-4" />
+          {unreadCount > 0 && (
+            <span
+              className="absolute -top-0.5 -right-0.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full px-0.5 text-[9px] font-bold leading-none pointer-events-none"
+              style={{ background: 'oklch(0.65 0.18 25)', color: 'white' }}
+            >
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </span>
+          )}
         </Link>
       </div>
 
