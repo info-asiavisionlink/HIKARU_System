@@ -7,6 +7,7 @@ const WORKER_NOTIFICATION_TYPES = [
   'attendance_correction_rejected',
   'expense_approved',
   'expense_rejected',
+  'expense_settled',
   'shift_created',
   'shift_updated',
   'shift_cancelled',
