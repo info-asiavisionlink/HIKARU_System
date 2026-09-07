@@ -1433,14 +1433,25 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
   // localStorage から設定をロード（クライアントサイドのみ）
   React.useEffect(() => { setVoiceSettingsSt(loadVoiceSettings()) }, [])
 
-  // ─── Startup speed: Provider mount後にSDKとTokenをバックグラウンドpreload ──
-  // WebRTC接続・RealtimeSession生成・AI課金は一切しない。
-  // SDKモジュールのダウンロードとclientSecret取得のみ。
-  const refreshToken = React.useCallback(() => {
-    // 既に有効なtokenがあれば更新しない（無駄なAPI呼び出し防止）
+  // ─── Realtime Token取得 (on-demand, in-flight lock付き) ────────
+  //
+  // 修正 (Realtime Token normalization、Console と同一設計):
+  //   - mount時 Token先読み → 廃止 (multi-tab で N × token POST の
+  //     multiplication 発生していた)
+  //   - visibilitychange Token更新 → 廃止 (同上)
+  //   - Hands-Free開始時に connectRealtime が inline で fetch する経路のみ
+  //
+  // Promise-based in-flight lock で同一 tab 内の並列 refreshToken() 呼び出しを
+  // 1 fetch に collapse (将来的な用途への safety net)。
+  const refreshTokenInFlightRef = React.useRef<Promise<void> | null>(null)
+  const refreshToken = React.useCallback((): Promise<void> => {
+    // in-flight lock: 進行中の fetch があれば同じ Promise を返す (dedup)
+    const inflight = refreshTokenInFlightRef.current
+    if (inflight) return inflight
+    // 有効な cached token があれば no-op
     const existing = prefetchedTokenRef.current
-    if (existing && (Date.now() - existing.fetchedAt) < PREFETCH_TTL_MS) return
-    fetch('/api/ai/realtime-token', {
+    if (existing && (Date.now() - existing.fetchedAt) < PREFETCH_TTL_MS) return Promise.resolve()
+    const p = fetch('/api/ai/realtime-token', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       credentials: 'include', body: JSON.stringify({ model: RT_MODEL }),
     })
@@ -1448,32 +1459,31 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
       .then(d => {
         if (d?.clientSecret) {
           prefetchedTokenRef.current = { clientSecret: d.clientSecret, fetchedAt: Date.now() }
-          console.debug('[JARVIS startup] PREFETCH_TOKEN_READY (age=0ms)')
+          console.debug('[JARVIS] TOKEN_READY (on-demand)')
         }
       })
-      .catch(() => { /* prefetch失敗はsilentに無視。connectRealtime()でfallback取得 */ })
+      .catch(() => { /* silent — connectRealtime fallbackで取得 */ })
+      .finally(() => { refreshTokenInFlightRef.current = null })
+    refreshTokenInFlightRef.current = p
+    return p
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // ─── Provider mount後: SDK module のみ preload (Token は取得しない) ──
+  //
+  // 修正: 従来この useEffect が refreshToken() を fire していたため、
+  // N tabs × mount + visibilitychange = N × 2+ token POST の
+  // multiplication が発生していた。SDK module preload は課金/API request を
+  // 発生させないため維持。
   React.useEffect(() => {
-    // SDK preload: importのみ。RealtimeSession/Agent/WebRTCは作らない。
     if (!realtimeModulePromiseRef.current) {
       console.debug('[JARVIS startup] PREFETCH_MODULE_START')
       realtimeModulePromiseRef.current = import('@openai/agents/realtime')
         .then(m => { console.debug('[JARVIS startup] PREFETCH_MODULE_READY'); return m })
         .catch(() => { realtimeModulePromiseRef.current = null; return null })
     }
-    // Token prefetch: clientSecretをメモリにキャッシュ（480秒TTL = 8分）。
-    console.debug('[JARVIS startup] PREFETCH_TOKEN_START')
-    refreshToken()
-
-    // Page visibility復帰時に token が期限切れなら再取得（1回のみ、無限polling禁止）
-    const handleVisibility = () => {
-      if (document.visibilityState !== 'visible') return
-      refreshToken()
-    }
-    document.addEventListener('visibilitychange', handleVisibility)
-    return () => document.removeEventListener('visibilitychange', handleVisibility)
+    // (removed) refreshToken() on mount — cost multiplication 防止
+    // (removed) visibilitychange listener for token — 同上
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -2284,6 +2294,11 @@ export function SystemVoiceProvider({ children }: { children: React.ReactNode })
   React.useEffect(() => { startListeningRef.current = startListening }, [startListening])
 
   const startSession = React.useCallback(() => {
+    // 二重クリック防止 (同期 ref guard、Console と同一設計): 既に session 起動中 or
+    // connect 中なら no-op。connectRealtime 内にも realtimeSessionRef +
+    // voiceEngineModeRef guard 有り (二重防御)。
+    if (isSessionRef.current) return
+    if (voiceEngineModeRef.current === 'realtime-connecting') return
     isSessionRef.current = true
     setIsSession(true)
     setIsStandby(false)
