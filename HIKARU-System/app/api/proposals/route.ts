@@ -125,7 +125,7 @@ async function notifyAdminsOfProposalSubmitted(
       type:                 'project_proposal_submitted',
       target_app:           'console',
       is_read:              false,
-      target_url:           '/proposals',
+      target_url:           '/project-requests',
     }))
 
     const { error } = await admin.from('notifications').insert(rows)

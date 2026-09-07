@@ -1,25 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-
-// Worker向け通知と同じ境界（取得APIと一致させる）。
-// target_app='console' の管理者通知を全既読対象から除外する。
-const WORKER_NOTIFICATION_TYPES = [
-  'attendance_correction_approved',
-  'attendance_correction_rejected',
-  'expense_approved',
-  'expense_rejected',
-  'expense_settled',
-  'shift_created',
-  'shift_updated',
-  'shift_cancelled',
-  'shift_confirmed',
-  'project_assigned',
-  'project_unassigned',
-  'project_cancelled',
-  'project_paused',
-  'project_completed',
-  'project_details_changed',
-]
+import { WORKER_NOTIFICATION_TYPES } from '@/lib/notifications/types'
 
 // PATCH /api/notifications/read-all
 // 本人の全未読 Worker 通知だけを一括既読化。

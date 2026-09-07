@@ -1,24 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-
-// Worker向け通知と同じ境界（取得APIと一致させる）。
-const WORKER_NOTIFICATION_TYPES = [
-  'attendance_correction_approved',
-  'attendance_correction_rejected',
-  'expense_approved',
-  'expense_rejected',
-  'expense_settled',
-  'shift_created',
-  'shift_updated',
-  'shift_cancelled',
-  'shift_confirmed',
-  'project_assigned',
-  'project_unassigned',
-  'project_cancelled',
-  'project_paused',
-  'project_completed',
-  'project_details_changed',
-]
+import { WORKER_NOTIFICATION_TYPES } from '@/lib/notifications/types'
 
 // PATCH /api/notifications/[id]/read
 // 本人の Worker 通知1件のみ既読化。is_read のみ更新（Mass Assignment防止）。

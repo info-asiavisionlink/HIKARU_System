@@ -1,9 +1,14 @@
 'use client'
 
 import * as React from 'react'
+import { useRouter } from 'next/navigation'
 import { WorkerHeader } from '@/components/layouts/WorkerHeader'
 import { cn } from '@hikaru/ui'
-import { Bell, Info, AlertTriangle, AlertCircle, CheckCircle2 } from 'lucide-react'
+import {
+  Bell, Info, AlertTriangle, AlertCircle, CheckCircle2,
+  Wallet, CalendarDays, Briefcase, ClipboardCheck,
+} from 'lucide-react'
+import { isSafeInternalNotificationPath } from '@/lib/notifications/safe-url'
 
 interface NotificationRow {
   id: string
@@ -15,46 +20,54 @@ interface NotificationRow {
   created_at: string
 }
 
-const typeConfig: Record<string, { icon: React.ElementType; color: string }> = {
-  info:    { icon: Info,          color: 'text-[var(--color-primary)]' },
-  warning: { icon: AlertTriangle, color: 'text-[var(--color-warning)]' },
-  error:   { icon: AlertCircle,   color: 'text-[var(--color-error)]'   },
-  success: { icon: CheckCircle2,  color: 'text-[var(--color-success)]' },
+// notification type から表示アイコンを解決する。
+// 未定義 type は info アイコンにフォールバック。
+function iconForType(type: string): { icon: React.ElementType; color: string } {
+  if (type.startsWith('expense_'))    return { icon: Wallet,         color: 'text-[var(--color-primary)]' }
+  if (type.startsWith('attendance_')) return { icon: ClipboardCheck, color: 'text-[var(--color-primary)]' }
+  if (type.startsWith('shift_'))      return { icon: CalendarDays,   color: 'text-[var(--color-primary)]' }
+  if (type.startsWith('project_'))    return { icon: Briefcase,      color: 'text-[var(--color-primary)]' }
+  if (type === 'warning')             return { icon: AlertTriangle,  color: 'text-[var(--color-warning)]' }
+  if (type === 'error')               return { icon: AlertCircle,    color: 'text-[var(--color-error)]'   }
+  if (type === 'success')             return { icon: CheckCircle2,   color: 'text-[var(--color-success)]' }
+  return { icon: Info, color: 'text-[var(--color-primary)]' }
 }
 
 export default function NotificationsPage() {
+  const router = useRouter()
   const [items, setItems] = React.useState<NotificationRow[]>([])
   const [loading, setLoading] = React.useState(true)
+  const [markingAll, setMarkingAll] = React.useState(false)
   const scrollRef = React.useRef<HTMLDivElement>(null)
 
-  React.useEffect(() => {
-    async function load() {
-      try {
-        // Server API経由でWorker向け通知を取得（Browser Supabase auth hang回避）
-        const res = await fetch('/api/notifications', {
-          credentials: 'include',
-          cache:       'no-store',
-        })
-        if (!res.ok) return
-        const { notifications } = await res.json()
-        setItems(notifications ?? [])
-
-        // 未読があれば一括既読化（Server API経由・fire-and-forget）
-        const hasUnread = (notifications ?? []).some((n: NotificationRow) => !n.is_read)
-        if (hasUnread) {
-          fetch('/api/notifications/read-all', {
-            method:      'PATCH',
-            credentials: 'include',
-          }).catch(() => {})
-        }
-      } catch {
-        // エラー時もLoading解除
-      } finally {
-        setLoading(false)
-      }
+  const loadNotifications = React.useCallback(async (opts?: { signal?: AbortSignal }) => {
+    try {
+      const res = await fetch('/api/notifications', {
+        credentials: 'include',
+        cache:       'no-store',
+        signal:      opts?.signal,
+      })
+      if (!res.ok) return
+      const { notifications } = await res.json()
+      setItems(notifications ?? [])
+    } catch {
+      /* ignore */
     }
-    load()
   }, [])
+
+  // 初回ロード。ページ open だけで既読化しない (以前の auto read-all を廃止)。
+  React.useEffect(() => {
+    const controller = new AbortController()
+    let mounted = true
+    ;(async () => {
+      await loadNotifications({ signal: controller.signal })
+      if (mounted) setLoading(false)
+    })()
+    return () => {
+      mounted = false
+      controller.abort()
+    }
+  }, [loadNotifications])
 
   // ローディング完了後にスクロールを先頭にリセット（Chromeのscroll anchoring対策）
   React.useEffect(() => {
@@ -63,9 +76,66 @@ export default function NotificationsPage() {
     }
   }, [loading])
 
+  // 明示的な「すべて既読」ボタン。失敗時は UI を勝手に既読へ変更しない。
+  async function handleMarkAll() {
+    if (markingAll) return
+    setMarkingAll(true)
+    try {
+      const res = await fetch('/api/notifications/read-all', {
+        method:      'PATCH',
+        credentials: 'include',
+      })
+      if (!res.ok) return
+      setItems((prev) => prev.map((n) => ({ ...n, is_read: true })))
+    } catch {
+      /* ignore */
+    } finally {
+      setMarkingAll(false)
+    }
+  }
+
+  // 通知クリック: 未読なら PATCH → success で local を is_read=true
+  // → safe な target_url があれば navigate
+  async function handleClick(n: NotificationRow) {
+    if (!n.is_read) {
+      try {
+        const res = await fetch(`/api/notifications/${n.id}/read`, {
+          method:      'PATCH',
+          credentials: 'include',
+        })
+        if (res.ok) {
+          setItems((prev) => prev.map((x) => (x.id === n.id ? { ...x, is_read: true } : x)))
+        }
+        // 失敗時は UI 上 unread のまま。navigate は続行 (target 側で再取得できる)。
+      } catch {
+        /* ignore */
+      }
+    }
+    if (isSafeInternalNotificationPath(n.target_url)) {
+      router.push(n.target_url)
+    }
+  }
+
+  const unreadCount = items.filter((n) => !n.is_read).length
+
   return (
     <div className="bg-[var(--color-background)]" style={{ height: 'calc(100dvh - var(--header-height))' }}>
-      <WorkerHeader title="通知" showBack />
+      <WorkerHeader
+        title="通知"
+        showBack
+        rightAction={
+          unreadCount > 0 ? (
+            <button
+              type="button"
+              onClick={handleMarkAll}
+              disabled={markingAll}
+              className="text-xs font-medium text-[var(--color-primary)] disabled:opacity-40"
+            >
+              {markingAll ? '処理中...' : 'すべて既読'}
+            </button>
+          ) : null
+        }
+      />
 
       <div
         ref={scrollRef}
@@ -110,13 +180,19 @@ export default function NotificationsPage() {
                   </div>
                   <div className="mx-4 rounded-[var(--radius-xl)] overflow-hidden border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
                     {groupItems.map((n) => {
-                      const { icon: Icon, color } = typeConfig[n.type] ?? typeConfig.info
+                      const { icon: Icon, color } = iconForType(n.type)
+                      const clickable = isSafeInternalNotificationPath(n.target_url) || !n.is_read
                       return (
-                        <div
+                        <button
                           key={n.id}
+                          type="button"
+                          onClick={() => handleClick(n)}
+                          disabled={!clickable}
                           className={cn(
-                            'flex items-start gap-3 px-4 py-4 bg-[var(--color-surface)]',
-                            !n.is_read && 'bg-[var(--color-primary-muted)]'
+                            'w-full text-left flex items-start gap-3 px-4 py-4 bg-[var(--color-surface)] transition-colors',
+                            clickable && 'hover:bg-[var(--color-surface-raised)] cursor-pointer',
+                            !clickable && 'cursor-default',
+                            !n.is_read && 'bg-[var(--color-primary-muted)]',
                           )}
                         >
                           <Icon className={cn('h-5 w-5 mt-0.5 shrink-0', color)} />
@@ -130,7 +206,7 @@ export default function NotificationsPage() {
                             </p>
                           </div>
                           {!n.is_read && <span className="h-2 w-2 rounded-full bg-[var(--color-primary)] shrink-0 mt-1.5" />}
-                        </div>
+                        </button>
                       )
                     })}
                   </div>

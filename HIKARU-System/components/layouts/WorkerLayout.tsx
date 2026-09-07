@@ -18,12 +18,38 @@ export function WorkerLayout({ children }: WorkerLayoutProps) {
   const [unreadCount, setUnreadCount] = React.useState(0)
   const pathname = usePathname()
 
-  // ページ遷移ごとに未読件数を再取得（通知ページのread-all後も正しく0に更新される）
+  // 未読件数の同期方針:
+  //   - 初回 mount / pathname 変化: 即 fetch (read-all 後の badge=0 を即反映)
+  //   - 30秒 polling: バックグラウンドで開かれた画面でも新着を検知
+  //   - unmount 時 / pathname 切り替わり時に interval を必ず cleanup
+  //   - AbortController で in-flight 要求も打ち切り、setState-after-unmount を防ぐ
   React.useEffect(() => {
-    fetch('/api/notifications', { credentials: 'include', cache: 'no-store' })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) setUnreadCount(d.unread_count ?? 0) })
-      .catch(() => {})
+    const controller = new AbortController()
+    let cancelled = false
+
+    async function fetchUnread() {
+      try {
+        const res = await fetch('/api/notifications', {
+          credentials: 'include',
+          cache:       'no-store',
+          signal:      controller.signal,
+        })
+        if (!res.ok) return
+        const d = await res.json()
+        if (!cancelled) setUnreadCount(d?.unread_count ?? 0)
+      } catch {
+        /* AbortError / network 失敗は無視 (badge は既存値保持) */
+      }
+    }
+
+    void fetchUnread()
+    const intervalId = setInterval(fetchUnread, 30_000)
+
+    return () => {
+      cancelled = true
+      controller.abort()
+      clearInterval(intervalId)
+    }
   }, [pathname])
 
   return (

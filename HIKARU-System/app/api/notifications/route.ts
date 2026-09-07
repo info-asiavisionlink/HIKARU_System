@@ -1,31 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
-
-// Worker向け通知のみ表示する。ADMIN_ONLYタイプ(attendance_correction_submitted等)は除外。
-// employee+admin兼任ユーザーが管理者向け通知をWorker画面で見てしまう問題を防ぐ。
-const WORKER_NOTIFICATION_TYPES = [
-  'attendance_correction_approved',
-  'attendance_correction_rejected',
-  'expense_approved',
-  'expense_rejected',
-  'expense_settled',
-  'shift_created',
-  'shift_updated',
-  'shift_cancelled',
-  'shift_confirmed',
-  'project_assigned',
-  'project_unassigned',
-  'project_cancelled',
-  'project_paused',
-  'project_completed',
-  'project_details_changed',
-]
+import { WORKER_NOTIFICATION_TYPES } from '@/lib/notifications/types'
 
 // GET /api/notifications
 // ログインWorker本人の通知のみ返す。company_id + recipient_profile_id で二重確認。
 // WORKER_NOTIFICATION_TYPES と target_app の二重防御でADMIN通知を除外する:
 //   - type IN WORKER_NOTIFICATION_TYPES: typeによる第1防御
 //   - target_app='worker' OR target_app IS NULL: appによる第2防御 (NULL=legacy互換)
+//
+// unread_count は list.filter ではなく別 count query で算出。
+// list を .limit(50) で切っても unread の総数を正しく報告する。
 export async function GET(req: NextRequest) {
   const uid = req.cookies.get('hk_s_uid')?.value
   if (!uid) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
@@ -61,7 +45,21 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  const unread_count = (notifications ?? []).filter(n => !n.is_read).length
+  // 未読総数を別 count query で取得 (list limit の影響を受けない)
+  const companyIdForCount = (profile as { company_id: string }).company_id
+  const { count: unreadTotal, error: countError } = await admin
+    .from('notifications')
+    .select('*', { count: 'exact', head: true })
+    .eq('recipient_profile_id', uid)
+    .eq('company_id', companyIdForCount)
+    .in('type', WORKER_NOTIFICATION_TYPES)
+    .or('target_app.eq.worker,target_app.is.null')
+    .eq('is_read', false)
+
+  // count 失敗時は list ベースの近似値でフォールバック (badge が壊れないように)
+  const unread_count = countError || unreadTotal === null
+    ? (notifications ?? []).filter(n => !n.is_read).length
+    : unreadTotal
 
   return NextResponse.json({ notifications: notifications ?? [], unread_count })
 }
