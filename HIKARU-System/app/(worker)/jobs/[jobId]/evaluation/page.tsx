@@ -518,7 +518,7 @@ export default function EvaluationPage() {
       </div>
 
       {/* 固定フッター */}
-      <div className="fixed bottom-[var(--bottom-nav-height)] left-0 right-0 px-4 pb-4 pt-3 bg-[var(--color-surface)]/95 backdrop-blur-md border-t border-[var(--color-border)] space-y-2">
+      <div className="fixed bottom-[var(--bottom-nav-height)] left-0 md:left-[var(--sidebar-width)] right-0 px-4 pb-4 pt-3 bg-[var(--color-surface)]/95 backdrop-blur-md border-t border-[var(--color-border)] space-y-2">
         {evaluations.length === 0 ? (
           <button
             onClick={() => runEvaluation()}

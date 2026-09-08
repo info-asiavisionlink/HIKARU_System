@@ -102,12 +102,37 @@ export default function JobDetailPage() {
       return
     }
 
+    // 順序: report generate → completeJob
+    //   completed 後の初回 report 生成は API 側でも許可されるが (Fix 1),
+    //   in_progress のうちに生成した方が意味的に自然 (finalize snapshot → lock)。
+    //   report 失敗時は既存 UX を維持し完了フローは止めず、evaluation画面へ誘導する。
+    setGeneratingReport(true)
+    toast.success('作業完了処理中…報告書を生成しています')
+    let reportOk = false
+    let reportErrorMessage: string | null = null
+    try {
+      const res = await fetch('/api/ai/report', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ jobId: activeJob.id }),
+      })
+      const body = await res.json().catch(() => null)
+      reportOk = !!body?.success
+      if (!reportOk) {
+        reportErrorMessage = body?.error?.message ?? `HTTP ${res.status}`
+      }
+    } catch (e) {
+      reportErrorMessage = e instanceof Error ? e.message : String(e)
+    } finally {
+      setGeneratingReport(false)
+    }
+
     setCompleting(true)
     let ok = false
     try {
       ok = await completeJob(activeJob.id)
-    } catch {
-      toast.error('完了処理に失敗しました')
+    } catch (e) {
+      toast.error('完了処理に失敗しました: ' + (e instanceof Error ? e.message : ''))
       return
     } finally {
       setCompleting(false)
@@ -121,28 +146,16 @@ export default function JobDetailPage() {
     const completedAt = new Date().toISOString()
     setActiveJob((prev: any) => ({ ...prev, status: 'completed', completed_at: completedAt }))
 
-    // 報告書を自動生成
-    setGeneratingReport(true)
-    toast.success('作業完了！報告書を自動生成しています...')
-    try {
-      const res = await fetch('/api/ai/report', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobId: activeJob.id }),
-      })
-      const json = await res.json()
-      if (json.success) {
-        toast.success('報告書を生成しました！お疲れ様でした！')
-        router.push(`/jobs/${projectId}/evaluation`)
-      } else {
-        toast.error('報告書の自動生成に失敗しました。評価ページから手動で生成できます。')
-        router.push(`/jobs/${projectId}/evaluation`)
-      }
-    } catch {
-      toast.error('ネットワークエラーが発生しました')
-    } finally {
-      setGeneratingReport(false)
+    if (reportOk) {
+      toast.success('報告書を生成しました！お疲れ様でした！')
+    } else {
+      toast.error(
+        '報告書の自動生成に失敗しました' +
+        (reportErrorMessage ? `: ${reportErrorMessage}` : '') +
+        '。評価ページから再生成できます。'
+      )
     }
+    router.push(`/jobs/${projectId}/evaluation`)
   }
 
   // Photo stats
@@ -337,7 +350,7 @@ export default function JobDetailPage() {
 
       {/* 固定フッター: 作業中・完了時のみ */}
       {activeJob && (
-        <div className="fixed bottom-[var(--bottom-nav-height)] left-0 right-0 px-4 pb-4 pt-3 bg-[var(--color-surface)]/95 backdrop-blur-md border-t border-[var(--color-border)]">
+        <div className="fixed bottom-[var(--bottom-nav-height)] left-0 md:left-[var(--sidebar-width)] right-0 px-4 pb-4 pt-3 bg-[var(--color-surface)]/95 backdrop-blur-md border-t border-[var(--color-border)]">
           {isJobCompleted ? (
             <div className="flex gap-2">
               <Link

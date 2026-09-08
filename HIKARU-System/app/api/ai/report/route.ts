@@ -52,17 +52,15 @@ export async function POST(req: NextRequest) {
       return Response.json({ success: false, error: { code: 'NOT_FOUND', message: 'ジョブが見つかりません' } }, { status: 404 })
     }
 
-    // JOB-C6A: completed Jobへの報告書生成をブロック（ownership確認後、OpenAI call前）
-    if ((job as any).status === 'completed') {
-      return Response.json(
-        { success: false, error: { code: 'JOB_ALREADY_COMPLETED', message: 'この作業は既に完了しているため変更できません。' } },
-        { status: 409 },
-      )
-    }
-
     // Dedup: 既存Report確認（OpenAI callより前 — 二重生成・連打防止）
     // NOTE: reports.job_id にUNIQUE制約がないため同時requestでのrace conditionは
     //       DBレベルでは防止できない。UI連打・画面再遷移による重複は防止する。
+    //
+    // JOB-C6A との順序について:
+    //   completed job でも report が未生成の場合は初回生成を許可する。
+    //   report は completion フローの成果物であり、completed 後の初回生成は
+    //   仕様上必要な mutation。regeneration・上書きは既存 report 判定で
+    //   `existingReport` return path が防止する。
     const { data: existingReport } = await admin
       .from('reports')
       .select('id, version, content, overall_score')
@@ -72,11 +70,18 @@ export async function POST(req: NextRequest) {
       .maybeSingle()
 
     if (existingReport) {
+      // 既存 report がある場合は completed / in_progress 問わず既存を返す
+      // (二重生成防止 = 上書き防止 = report tamper 防止)
       return Response.json({
         success: true,
         data: { reportId: (existingReport as any).id, content: (existingReport as any).content },
       })
     }
+
+    // JOB-C6A の残存責務:
+    //   completed でかつ report が存在しない場合 → 初回生成のみ許可 (この関数を通過)。
+    //   in_progress の場合はもちろん生成可能。
+    //   ここに status ガードは残さない (existingReport check が regeneration を防ぐ)。
 
     const project = (job as any).projects
 

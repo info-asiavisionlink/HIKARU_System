@@ -126,15 +126,10 @@ async function handleEvaluate(body: any, uid: string, admin: any) {
   if (!job) {
     return Response.json({ success: false, error: { code: 'FORBIDDEN', message: 'このジョブへのアクセス権がありません' } }, { status: 403 })
   }
-  // JOB-C6A: completed JobへのAI評価をブロック（ownership確認後、AI call前）
-  if (job.status === 'completed') {
-    return Response.json(
-      { success: false, error: { code: 'JOB_ALREADY_COMPLETED', message: 'この作業は既に完了しているため変更できません。' } },
-      { status: 409 },
-    )
-  }
 
   // QUALITY-FRESH: 同じBefore/AfterURLなら既存評価を返す（Vision AI 0 call）
+  //   completed job でも cache hit の場合は read-only 相当 (DB書込なし・AI cost 0) で許可する。
+  //   これにより完了後の評価再表示 / 再取得 UX を維持しつつ mutation は防止する。
   const { data: cachedEval } = await admin
     .from('ai_evaluations')
     .select('evaluated_before_url, evaluated_after_url, score, passed, recommendation, comment, comparison, improvements, remaining_issues, dirty_removal, thoroughness, shine, before_summary, after_summary, photo_quality_ok, photo_quality_issues')
@@ -144,6 +139,15 @@ async function handleEvaluate(body: any, uid: string, admin: any) {
 
   if (isEvaluationFresh(cachedEval, beforeUrl, afterUrl)) {
     return Response.json({ success: true, data: cachedEval, fromCache: true })
+  }
+
+  // JOB-C6A: fresh cache がない completed job への新規 AI 評価はブロック
+  //   (upsert = mutation + Vision AI cost が発生するため)
+  if (job.status === 'completed') {
+    return Response.json(
+      { success: false, error: { code: 'JOB_ALREADY_COMPLETED', message: 'この作業は既に完了しているため変更できません。' } },
+      { status: 409 },
+    )
   }
 
   // 撮影箇所名・descriptionを取得
@@ -231,13 +235,10 @@ async function handleEvaluateAll(body: any, uid: string, admin: any) {
   if (!job) {
     return Response.json({ success: false, error: { code: 'FORBIDDEN', message: 'このジョブへのアクセス権がありません' } }, { status: 403 })
   }
-  // JOB-C6A: completed JobへのAI一括評価をブロック（ownership確認後、AI loop前）
-  if (job.status === 'completed') {
-    return Response.json(
-      { success: false, error: { code: 'JOB_ALREADY_COMPLETED', message: 'この作業は既に完了しているため変更できません。' } },
-      { status: 409 },
-    )
-  }
+  // JOB-C6A: completed job では新規 AI 評価 (mutation + Vision cost) を実行しない。
+  //   ただし既存 fresh cache のあるスポットは read-only 相当で返せるため、
+  //   ここで一律 409 にせず、per-spot loop 内で分岐する (下記の isCompleted 参照)。
+  const isCompleted = job.status === 'completed'
 
   // QUALITY-MG: Manual一覧をspot loop前に1回だけ取得（N+1なし・AI callなし）
   let allManuals: QualityManualRow[] = []
@@ -302,6 +303,19 @@ async function handleEvaluateAll(body: any, uid: string, admin: any) {
           passed:         existingEval!.passed,
           recommendation: existingEval!.recommendation,
         },
+      })
+      continue
+    }
+
+    // completed job で fresh cache なしのスポットは
+    // 新規 AI call / DB upsert を実行せずスキップ (evaluation mutation ロック)。
+    // cache 済みスポットは前段の isEvaluationFresh 分岐で既に results に push されている。
+    if (isCompleted) {
+      results.push({
+        spotId:   spot.id,
+        spotName: spot.name,
+        success:  false,
+        error:    '完了済みのため新規評価は行いません（既存の評価は表示されます）',
       })
       continue
     }
